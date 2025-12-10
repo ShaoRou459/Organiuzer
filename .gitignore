@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+
+# Logs
+*.log
+logs/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Editor directories and files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Electron
+release/
+*.asar
+
+# Debug files
+debug.log
+dev.log
+electron.log
+server.log
+vite.log
+vite_debug.log
+vite_manual.log
+
+# Optional: Claude Code settings (uncomment if you want to ignore)
+# .claude/
