@@ -27,6 +27,17 @@ export default function FolderManager({ path, onBack, onOpenSettings }) {
   const [history, setHistory] = useState([]);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [notification, setNotification] = useState({ open: false, message: '', severity: 'success' });
+  const [pathCopied, setPathCopied] = useState(false);
+
+  const handleCopyPath = async () => {
+    try {
+      await navigator.clipboard.writeText(path);
+      setPathCopied(true);
+      setTimeout(() => setPathCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy path:', err);
+    }
+  };
 
   useEffect(() => {
     scanFolder();
@@ -206,12 +217,21 @@ export default function FolderManager({ path, onBack, onOpenSettings }) {
               <Typography variant="h6" fontWeight={500} noWrap>
                 {folderName}
               </Typography>
-              <Tooltip title={path} placement="bottom-start">
+              <Tooltip title={pathCopied ? "Copied!" : "Click to copy path"} placement="bottom-start">
                 <Typography
                   variant="body2"
                   color="text.secondary"
                   noWrap
-                  sx={{ maxWidth: '100%', cursor: 'help' }}
+                  onClick={handleCopyPath}
+                  sx={{
+                    maxWidth: '100%',
+                    cursor: 'pointer',
+                    '&:hover': {
+                      textDecoration: 'underline',
+                      color: 'primary.main',
+                    },
+                    transition: 'color 0.15s ease',
+                  }}
                 >
                   {path}
                 </Typography>

@@ -16,12 +16,29 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [themeMode, setThemeMode] = useState('dark');
 
-  // State for metrics (mocked or loaded from settings/history)
+  // State for metrics
   const [metrics, setMetrics] = useState({
     filesOrganized: 0,
-    spaceSaved: '0 MB',
-    timeSaved: '0 hrs'
+    bytesOrganized: 0,
+    timeSavedSeconds: 0,
+    history: []
   });
+
+  const loadMetrics = async () => {
+    try {
+      const raw = await window.electronAPI.getMetrics();
+      setMetrics({
+        filesOrganized: raw.totalFiles,
+        bytesOrganized: raw.totalBytes,
+        timeSavedSeconds: raw.totalTimeSaved,
+        history: raw.history
+      });
+    } catch (error) {
+      console.error("Failed to load metrics:", error);
+    }
+  };
+
+  const [aiConfig, setAiConfig] = useState({ model: 'gpt-4o' });
 
   useEffect(() => {
     // Load initial theme setting
@@ -33,7 +50,19 @@ export default function App() {
         console.error(e);
       }
     };
+
+    const loadAiConfig = async () => {
+      try {
+        const model = await window.electronAPI.getSettings('model');
+        if (model) setAiConfig(prev => ({ ...prev, model }));
+      } catch (e) {
+        console.error("Failed to load AI config", e);
+      }
+    }
+
     loadTheme();
+    loadMetrics();
+    loadAiConfig();
   }, []);
 
   const theme = useMemo(() => getTheme(themeMode), [themeMode]);
@@ -53,6 +82,7 @@ export default function App() {
   const handleBackHome = () => {
     setCurrentView('home');
     setCurrentPath(null);
+    loadMetrics(); // Refresh stats
   };
 
   const handleOpenSettings = () => {
@@ -80,6 +110,7 @@ export default function App() {
               onSelectFolder={handleSelectFolder}
               onOpenSettings={handleOpenSettings}
               metrics={metrics}
+              aiConfig={aiConfig}
             />
           )}
 
@@ -94,7 +125,15 @@ export default function App() {
 
         <SettingsDialog
           open={isSettingsOpen}
-          onClose={() => setIsSettingsOpen(false)}
+          onClose={() => {
+            setIsSettingsOpen(false);
+            // Refresh config in case it changed
+            const loadAiConfig = async () => {
+              const model = await window.electronAPI.getSettings('model');
+              if (model) setAiConfig(prev => ({ ...prev, model }));
+            };
+            loadAiConfig();
+          }}
           onThemeChange={setThemeMode}
         />
       </Box>

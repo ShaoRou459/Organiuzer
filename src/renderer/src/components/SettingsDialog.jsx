@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Dialog, DialogTitle, DialogContent, DialogActions, 
-  Button, TextField, Typography, Box, Switch, 
+import {
+  Dialog, DialogTitle, DialogContent, DialogActions,
+  Button, TextField, Typography, Box, Switch,
   FormControlLabel, MenuItem, Divider, Tabs, Tab
 } from '@mui/material';
 
@@ -60,7 +60,7 @@ export default function SettingsDialog({ open, onClose, onThemeChange }) {
       for (const [key, value] of Object.entries(settings)) {
         await window.electronAPI.setSettings(key, value);
       }
-      
+
       // Notify parent about theme change immediately
       if (onThemeChange) {
         onThemeChange(settings.themeMode);
@@ -107,32 +107,32 @@ export default function SettingsDialog({ open, onClose, onThemeChange }) {
             />
 
             <Box sx={{ display: 'flex', gap: 2 }}>
-                <TextField
+              <TextField
                 label="Model Name"
                 fullWidth
                 value={settings.model || 'gpt-4o'}
                 onChange={(e) => handleChange('model', e.target.value)}
                 helperText="e.g., gpt-4o, gpt-3.5-turbo, or local model name"
+              />
+
+              {settings.provider === 'custom' && (
+                <TextField
+                  label="Base URL"
+                  fullWidth
+                  value={settings.baseUrl || ''}
+                  onChange={(e) => handleChange('baseUrl', e.target.value)}
+                  placeholder="http://localhost:11434/v1"
+                  helperText="For local LLMs (Ollama, LM Studio)"
                 />
-                
-                {settings.provider === 'custom' && (
-                    <TextField
-                    label="Base URL"
-                    fullWidth
-                    value={settings.baseUrl || ''}
-                    onChange={(e) => handleChange('baseUrl', e.target.value)}
-                    placeholder="http://localhost:11434/v1"
-                    helperText="For local LLMs (Ollama, LM Studio)"
-                    />
-                )}
+              )}
             </Box>
           </Box>
         </TabPanel>
 
         {/* General Settings */}
         <TabPanel value={tabIndex} index={1}>
-           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-             <TextField
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <TextField
               select
               label="Theme"
               value={settings.themeMode || 'dark'}
@@ -144,18 +144,18 @@ export default function SettingsDialog({ open, onClose, onThemeChange }) {
             </TextField>
 
             <FormControlLabel
-                control={
+              control={
                 <Switch
-                    checked={settings.debugMode || false}
-                    onChange={(e) => handleChange('debugMode', e.target.checked)}
+                  checked={settings.debugMode || false}
+                  onChange={(e) => handleChange('debugMode', e.target.checked)}
                 />
-                }
-                label="Debug Mode"
+              }
+              label="Debug Mode"
             />
             <Typography variant="caption" color="text.secondary">
-                Enables detailed logging and shows raw AI responses in the console.
+              Enables detailed logging and shows raw AI responses in the console.
             </Typography>
-           </Box>
+          </Box>
         </TabPanel>
 
       </DialogContent>

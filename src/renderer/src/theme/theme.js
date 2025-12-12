@@ -242,7 +242,9 @@ export const getTheme = (mode = 'dark') => {
           contained: {
             boxShadow: 'none',
             '&:hover': {
+              backgroundColor: palette.primary.main,
               boxShadow: `0 1px 2px ${alpha(palette.primary.main, 0.3)}`,
+              filter: 'brightness(1.1)',
             },
           },
           outlined: {

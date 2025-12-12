@@ -19,4 +19,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   scanFolder: (path) => ipcRenderer.invoke('folder:scan', path),
   analyzeFolder: (path, files) => ipcRenderer.invoke('folder:analyze', path, files),
   executeOrganization: (path, plan) => ipcRenderer.invoke('folder:execute', path, plan),
+  getMetrics: () => ipcRenderer.invoke('metrics:get'),
 });
