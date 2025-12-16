@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { Box, Typography, Button, Fade, useTheme, Card, CardActionArea, Container } from '@mui/material';
+import { useLanguage } from '../contexts/LanguageContext';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import StorageIcon from '@mui/icons-material/Storage';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
@@ -21,6 +22,7 @@ import pkg from '../../../../package.json';
 
 export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiConfig, recentActivity = [] }) {
   const theme = useTheme();
+  const { t } = useLanguage();
 
   // Calculate real trends from history data
   const trendData = useMemo(() => {
@@ -294,10 +296,10 @@ export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiCo
                 }}>
                   {(() => {
                     const hour = new Date().getHours();
-                    if (hour < 12) return '☀️ Good morning';
-                    if (hour < 17) return '🌤️ Good afternoon';
-                    if (hour < 21) return '🌆 Good evening';
-                    return '🌙 Good night';
+                    if (hour < 12) return `☀️ ${t('home.greeting.morning')}`;
+                    if (hour < 17) return `🌤️ ${t('home.greeting.afternoon')}`;
+                    if (hour < 21) return `🌆 ${t('home.greeting.evening')}`;
+                    return `🌙 ${t('home.greeting.night')}`;
                   })()}
                 </Typography>
 
@@ -317,7 +319,7 @@ export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiCo
                   fontWeight: 500,
                   opacity: 0.8
                 }}>
-                  Declutter • Organize • Automate
+                  {t('home.tagline')}
                 </Typography>
               </Box>
             </Card>
@@ -326,7 +328,7 @@ export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiCo
           {/* Left Stats Card (Files) - With Smooth Sparkline */}
           <Box sx={{ gridArea: 'left' }}>
             <StatsCard
-              title="Files Organized"
+              title={t('home.filesOrganized')}
               value={metrics.filesOrganized?.toLocaleString() || '0'}
               icon={<AutoAwesomeIcon fontSize="large" />}
               color={theme.palette.primary.main}
@@ -389,14 +391,14 @@ export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiCo
                 transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
               }}
             >
-              Start
+              {t('home.start')}
             </Button>
           </Box>
 
           {/* Right Top Card (Space) - With Smooth Sparkline */}
           <Box sx={{ gridArea: 'right1' }}>
             <StatsCard
-              title="Space Processed"
+              title={t('home.spaceProcessed')}
               value={formattedBytes}
               icon={<StorageIcon />}
               color={theme.palette.secondary.main} // Changed to secondary for variety
@@ -430,7 +432,7 @@ export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiCo
           {/* Right Bottom Card (Time) - With Sleek Radial */}
           <Box sx={{ gridArea: 'right2' }}>
             <StatsCard
-              title="Time Saved"
+              title={t('home.timeSaved')}
               value={formattedTime}
               icon={<AccessTimeIcon />}
               color={theme.palette.error.main}
@@ -487,7 +489,7 @@ export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiCo
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                   <ShowChartIcon color="primary" sx={{ fontSize: 24 }} />
                   <Typography variant="h6" fontWeight={700}>
-                    Activity Overview
+                    {t('home.activityOverview')}
                   </Typography>
                 </Box>
                 <Box sx={{ display: 'flex', gap: 1 }}>
@@ -549,7 +551,7 @@ export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiCo
                 }}>
                   <ShowChartIcon sx={{ fontSize: 40, color: 'text.disabled' }} />
                   <Typography variant="body2" color="text.secondary">
-                    No activity recorded yet
+                    {t('home.noActivityChart')}
                   </Typography>
                 </Box>
               )}
@@ -574,7 +576,7 @@ export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiCo
               <Typography variant="h6" fontWeight={700} sx={{ textAlign: 'center', wordBreak: 'break-word' }}>
                 {aiConfig?.model || 'Unknown'}
               </Typography>
-              <Typography variant="caption" color="text.secondary">Active Model</Typography>
+              <Typography variant="caption" color="text.secondary">{t('home.activeModel')}</Typography>
             </Card>
           </Box>
 
@@ -601,8 +603,8 @@ export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiCo
                 }}
               >
                 <SettingsIcon color="action" sx={{ mb: 1, fontSize: 28 }} />
-                <Typography variant="h6" fontWeight={700}>Settings</Typography>
-                <Typography variant="caption" color="text.secondary">Configure App</Typography>
+                <Typography variant="h6" fontWeight={700}>{t('settings.title')}</Typography>
+                <Typography variant="caption" color="text.secondary">{t('home.configureApp')}</Typography>
               </CardActionArea>
             </Card>
           </Box>
@@ -622,7 +624,7 @@ export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiCo
             }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
                 <HistoryIcon color="action" sx={{ fontSize: 20 }} />
-                <Typography variant="subtitle2" fontWeight={700}>Recent Activity</Typography>
+                <Typography variant="subtitle2" fontWeight={700}>{t('home.recentActivity')}</Typography>
               </Box>
 
               {recentActivity.length > 0 ? (
@@ -694,7 +696,7 @@ export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiCo
                   opacity: 0.5
                 }}>
                   <Typography variant="caption" color="text.secondary">
-                    No activity yet
+                    {t('home.noActivityList')}
                   </Typography>
                 </Box>
               )}
