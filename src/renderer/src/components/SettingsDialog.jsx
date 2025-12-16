@@ -114,18 +114,18 @@ export default function SettingsDialog({ open, onClose, onThemeChange }) {
                 onChange={(e) => handleChange('model', e.target.value)}
                 helperText="e.g., gpt-4o, gpt-3.5-turbo, or local model name"
               />
-
-              {settings.provider === 'custom' && (
-                <TextField
-                  label="Base URL"
-                  fullWidth
-                  value={settings.baseUrl || ''}
-                  onChange={(e) => handleChange('baseUrl', e.target.value)}
-                  placeholder="http://localhost:11434/v1"
-                  helperText="For local LLMs (Ollama, LM Studio)"
-                />
-              )}
             </Box>
+
+            <TextField
+              label="Base URL (Optional)"
+              fullWidth
+              value={settings.baseUrl || ''}
+              onChange={(e) => handleChange('baseUrl', e.target.value)}
+              placeholder={settings.provider === 'custom' ? 'http://localhost:11434/v1' : 'https://api.openai.com/v1'}
+              helperText={settings.provider === 'custom'
+                ? "Required for local LLMs (Ollama, LM Studio, etc.)"
+                : "Leave empty to use default OpenAI endpoint, or enter a custom URL"}
+            />
           </Box>
         </TabPanel>
 

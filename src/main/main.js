@@ -328,3 +328,7 @@ ipcMain.handle('metrics:get', () => {
     history: []
   });
 });
+
+ipcMain.handle('history:get', () => {
+  return store.get('sortingHistory', []);
+});

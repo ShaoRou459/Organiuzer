@@ -24,6 +24,9 @@ export default function App() {
     history: []
   });
 
+  // State for recent activity (file movement history)
+  const [recentActivity, setRecentActivity] = useState([]);
+
   const loadMetrics = async () => {
     try {
       const raw = await window.electronAPI.getMetrics();
@@ -35,6 +38,15 @@ export default function App() {
       });
     } catch (error) {
       console.error("Failed to load metrics:", error);
+    }
+  };
+
+  const loadRecentActivity = async () => {
+    try {
+      const history = await window.electronAPI.getHistory();
+      setRecentActivity(history || []);
+    } catch (error) {
+      console.error("Failed to load recent activity:", error);
     }
   };
 
@@ -62,6 +74,7 @@ export default function App() {
 
     loadTheme();
     loadMetrics();
+    loadRecentActivity();
     loadAiConfig();
   }, []);
 
@@ -83,6 +96,7 @@ export default function App() {
     setCurrentView('home');
     setCurrentPath(null);
     loadMetrics(); // Refresh stats
+    loadRecentActivity(); // Refresh activity
   };
 
   const handleOpenSettings = () => {
@@ -111,6 +125,7 @@ export default function App() {
               onOpenSettings={handleOpenSettings}
               metrics={metrics}
               aiConfig={aiConfig}
+              recentActivity={recentActivity}
             />
           )}
 
