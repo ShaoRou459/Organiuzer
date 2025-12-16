@@ -128,7 +128,7 @@ export const getTheme = (mode = 'dark') => {
       ...palette,
     },
     typography: {
-      fontFamily: '"Roboto", "Helvetica", "Arial", sans-serif',
+      fontFamily: '"Roboto", "Helvetica", "Arial", "Microsoft YaHei", "PingFang SC", sans-serif',
       h1: {
         fontSize: '2.5rem',
         fontWeight: 400,
