@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { Box, Typography, Button, Fade, useTheme, Card, CardActionArea, Container } from '@mui/material';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import StorageIcon from '@mui/icons-material/Storage';
@@ -21,6 +21,19 @@ import pkg from '../../../../package.json';
 
 export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiConfig, recentActivity = [] }) {
   const theme = useTheme();
+
+  // Mouse tracking for interactive gradient effects
+  const titleCardRef = useRef(null);
+  const [mousePos, setMousePos] = useState({ x: 50, y: 50 });
+  const [isHovering, setIsHovering] = useState(false);
+
+  const handleMouseMove = (e) => {
+    if (!titleCardRef.current) return;
+    const rect = titleCardRef.current.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 100;
+    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    setMousePos({ x, y });
+  };
 
   // Calculate real trends from history data
   const trendData = useMemo(() => {
@@ -210,76 +223,162 @@ export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiCo
           }
         }}>
 
-          {/* Title Card - With greeting, tagline and animated orbs */}
+          {/* Title Card - With interactive gradient mesh and animated orbs */}
           <Box sx={{ gridArea: 'title' }}>
-            <Card elevation={0} sx={{
-              bgcolor: 'background.surfaceContainer',
-              borderRadius: '16px',
-              border: '1px solid',
-              borderColor: 'divider',
-              p: 2,
-              height: '100%',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              position: 'relative',
-              overflow: 'hidden'
-            }}>
-              {/* Animated floating orbs - large movement across the card */}
+            <Card
+              ref={titleCardRef}
+              elevation={0}
+              onMouseMove={handleMouseMove}
+              onMouseEnter={() => setIsHovering(true)}
+              onMouseLeave={() => setIsHovering(false)}
+              sx={{
+                bgcolor: 'background.surfaceContainer',
+                borderRadius: '16px',
+                border: '1px solid',
+                borderColor: isHovering ? 'primary.main' : 'divider',
+                p: 2,
+                height: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                position: 'relative',
+                overflow: 'hidden',
+                cursor: 'default',
+                transition: 'border-color 0.4s ease',
+              }}>
+
+              {/* Base mesh gradient layer */}
               <Box sx={{
                 position: 'absolute',
-                top: '-20%',
-                left: '-10%',
-                width: 180,
-                height: 180,
+                inset: 0,
+                background: `
+                  radial-gradient(ellipse 80% 60% at 20% 30%, rgba(208,188,255,0.15) 0%, transparent 50%),
+                  radial-gradient(ellipse 70% 50% at 80% 70%, rgba(239,184,200,0.12) 0%, transparent 50%),
+                  radial-gradient(ellipse 60% 80% at 50% 50%, rgba(147,112,219,0.08) 0%, transparent 50%)
+                `,
+                opacity: 0.8,
+              }} />
+
+              {/* Mouse-following spotlight gradient */}
+              <Box sx={{
+                position: 'absolute',
+                inset: 0,
+                background: `radial-gradient(600px circle at ${mousePos.x}% ${mousePos.y}%, rgba(208,188,255,${isHovering ? 0.25 : 0.08}) 0%, transparent 40%)`,
+                transition: isHovering ? 'none' : 'background 0.5s ease-out',
+                pointerEvents: 'none',
+              }} />
+
+              {/* Animated floating orb 1 - Large Purple */}
+              <Box sx={{
+                position: 'absolute',
+                top: '-30%',
+                left: '-20%',
+                width: 350,
+                height: 350,
                 borderRadius: '50%',
-                background: 'radial-gradient(circle, rgba(208,188,255,0.5) 0%, transparent 70%)',
-                animation: 'roam1 8s ease-in-out infinite',
+                background: 'radial-gradient(circle, rgba(208,188,255,0.6) 0%, rgba(208,188,255,0.2) 40%, transparent 70%)',
+                filter: 'blur(40px)',
+                animation: 'roam1 12s ease-in-out infinite',
+                transform: isHovering
+                  ? `translate(${(mousePos.x - 50) * 0.3}px, ${(mousePos.y - 50) * 0.3}px)`
+                  : 'none',
+                transition: isHovering ? 'transform 0.15s ease-out' : 'transform 0.5s ease-out',
                 '@keyframes roam1': {
                   '0%': { transform: 'translate(0, 0) scale(1)' },
-                  '25%': { transform: 'translate(150px, 60px) scale(1.2)' },
-                  '50%': { transform: 'translate(250px, 30px) scale(0.9)' },
-                  '75%': { transform: 'translate(100px, 80px) scale(1.1)' },
+                  '25%': { transform: 'translate(180px, 80px) scale(1.3)' },
+                  '50%': { transform: 'translate(320px, 40px) scale(0.85)' },
+                  '75%': { transform: 'translate(120px, 100px) scale(1.15)' },
                   '100%': { transform: 'translate(0, 0) scale(1)' }
                 }
               }} />
+
+              {/* Animated floating orb 2 - Large Pink */}
               <Box sx={{
                 position: 'absolute',
-                bottom: '-15%',
-                right: '-5%',
+                bottom: '-25%',
+                right: '-15%',
+                width: 400,
+                height: 400,
+                borderRadius: '50%',
+                background: 'radial-gradient(circle, rgba(239,184,200,0.55) 0%, rgba(239,184,200,0.2) 40%, transparent 70%)',
+                filter: 'blur(50px)',
+                animation: 'roam2 15s ease-in-out infinite',
+                transform: isHovering
+                  ? `translate(${(mousePos.x - 50) * -0.25}px, ${(mousePos.y - 50) * -0.25}px)`
+                  : 'none',
+                transition: isHovering ? 'transform 0.2s ease-out' : 'transform 0.5s ease-out',
+                '@keyframes roam2': {
+                  '0%': { transform: 'translate(0, 0) scale(1)' },
+                  '20%': { transform: 'translate(-220px, -70px) scale(1.2)' },
+                  '40%': { transform: 'translate(-350px, -100px) scale(0.9)' },
+                  '60%': { transform: 'translate(-180px, -130px) scale(1.15)' },
+                  '80%': { transform: 'translate(-80px, -50px) scale(1.05)' },
+                  '100%': { transform: 'translate(0, 0) scale(1)' }
+                }
+              }} />
+
+              {/* Animated floating orb 3 - Center Violet */}
+              <Box sx={{
+                position: 'absolute',
+                top: '40%',
+                left: '45%',
+                marginTop: '-100px',
+                marginLeft: '-100px',
                 width: 200,
                 height: 200,
                 borderRadius: '50%',
-                background: 'radial-gradient(circle, rgba(239,184,200,0.45) 0%, transparent 70%)',
-                animation: 'roam2 10s ease-in-out infinite',
-                '@keyframes roam2': {
+                background: 'radial-gradient(circle, rgba(147,112,219,0.5) 0%, rgba(147,112,219,0.15) 50%, transparent 70%)',
+                filter: 'blur(35px)',
+                animation: 'roam3 10s ease-in-out infinite',
+                transform: isHovering
+                  ? `translate(${(mousePos.x - 50) * 0.5}px, ${(mousePos.y - 50) * 0.5}px) scale(1.2)`
+                  : 'none',
+                transition: isHovering ? 'transform 0.1s ease-out' : 'transform 0.5s ease-out',
+                '@keyframes roam3': {
                   '0%': { transform: 'translate(0, 0) scale(1)' },
-                  '20%': { transform: 'translate(-180px, -50px) scale(1.15)' },
-                  '40%': { transform: 'translate(-280px, -80px) scale(0.95)' },
-                  '60%': { transform: 'translate(-150px, -100px) scale(1.1)' },
-                  '80%': { transform: 'translate(-60px, -40px) scale(1.05)' },
+                  '25%': { transform: 'translate(-150px, -80px) scale(0.75)' },
+                  '50%': { transform: 'translate(120px, -100px) scale(1.3)' },
+                  '75%': { transform: 'translate(160px, 70px) scale(0.85)' },
                   '100%': { transform: 'translate(0, 0) scale(1)' }
                 }
               }} />
+
+              {/* Extra accent orb 4 - Small Cyan accent */}
               <Box sx={{
                 position: 'absolute',
-                top: '50%',
-                left: '50%',
-                marginTop: '-60px',
-                marginLeft: '-60px',
+                top: '20%',
+                right: '10%',
+                width: 150,
+                height: 150,
+                borderRadius: '50%',
+                background: 'radial-gradient(circle, rgba(100,200,255,0.4) 0%, transparent 60%)',
+                filter: 'blur(25px)',
+                animation: 'roam4 8s ease-in-out infinite',
+                opacity: isHovering ? 0.9 : 0.5,
+                transition: 'opacity 0.4s ease',
+                '@keyframes roam4': {
+                  '0%': { transform: 'translate(0, 0) scale(1)' },
+                  '33%': { transform: 'translate(-80px, 60px) scale(1.2)' },
+                  '66%': { transform: 'translate(-40px, -30px) scale(0.9)' },
+                  '100%': { transform: 'translate(0, 0) scale(1)' }
+                }
+              }} />
+
+              {/* Glow ring around cursor on hover */}
+              <Box sx={{
+                position: 'absolute',
                 width: 120,
                 height: 120,
                 borderRadius: '50%',
-                background: 'radial-gradient(circle, rgba(147,112,219,0.4) 0%, transparent 70%)',
-                animation: 'roam3 7s ease-in-out infinite',
-                '@keyframes roam3': {
-                  '0%': { transform: 'translate(0, 0) scale(1)' },
-                  '25%': { transform: 'translate(-120px, -60px) scale(0.8)' },
-                  '50%': { transform: 'translate(80px, -80px) scale(1.2)' },
-                  '75%': { transform: 'translate(120px, 50px) scale(0.9)' },
-                  '100%': { transform: 'translate(0, 0) scale(1)' }
-                }
+                background: 'radial-gradient(circle, rgba(208,188,255,0.3) 0%, transparent 70%)',
+                left: `calc(${mousePos.x}% - 60px)`,
+                top: `calc(${mousePos.y}% - 60px)`,
+                opacity: isHovering ? 1 : 0,
+                transform: `scale(${isHovering ? 1.2 : 0.5})`,
+                transition: 'opacity 0.3s ease, transform 0.3s ease',
+                pointerEvents: 'none',
+                filter: 'blur(10px)',
               }} />
 
               {/* Content */}
@@ -301,12 +400,22 @@ export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiCo
                   })()}
                 </Typography>
 
-                {/* App name */}
+                {/* App name with enhanced gradient */}
                 <Typography variant="h3" fontWeight={800} sx={{
-                  background: 'linear-gradient(90deg, #D0BCFF 0%, #EFB8C8 100%)',
+                  background: isHovering
+                    ? 'linear-gradient(135deg, #D0BCFF 0%, #64C8FF 50%, #EFB8C8 100%)'
+                    : 'linear-gradient(90deg, #D0BCFF 0%, #EFB8C8 100%)',
+                  backgroundSize: '200% 200%',
                   WebkitBackgroundClip: 'text',
                   WebkitTextFillColor: 'transparent',
-                  mb: 0.5
+                  mb: 0.5,
+                  transition: 'background 0.5s ease',
+                  animation: isHovering ? 'shimmer 2s ease-in-out infinite' : 'none',
+                  '@keyframes shimmer': {
+                    '0%': { backgroundPosition: '0% 50%' },
+                    '50%': { backgroundPosition: '100% 50%' },
+                    '100%': { backgroundPosition: '0% 50%' }
+                  }
                 }}>
                   Organiuzer
                 </Typography>
@@ -427,46 +536,158 @@ export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiCo
             </StatsCard>
           </Box>
 
-          {/* Right Bottom Card (Time) - With Sleek Radial */}
+          {/* Right Bottom Card (Time) - Premium Clock Design */}
           <Box sx={{ gridArea: 'right2' }}>
-            <StatsCard
-              title="Time Saved"
-              value={formattedTime}
-              icon={<AccessTimeIcon />}
-              color={theme.palette.error.main}
-              rowLayout
-            >
-              {/* Radial Chart for time */}
-              <Box sx={{ height: 70, width: 70, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <RadialBarChart
-                    innerRadius="75%"
-                    outerRadius="100%"
-                    barSize={6}
-                    data={[{ name: 'bg', value: 100, fill: theme.palette.action.hover }, ...timeData]}
-                    startAngle={90}
-                    endAngle={-270}
-                  >
-                    <RadialBar
-                      background={false}
-                      clockWise
-                      dataKey="value"
-                      cornerRadius={10}
-                    />
-                  </RadialBarChart>
-                </ResponsiveContainer>
-                {/* Center Icon */}
+            <Card elevation={0} sx={{
+              bgcolor: 'background.surfaceContainer',
+              border: '1px solid',
+              borderColor: 'divider',
+              borderRadius: '24px',
+              height: '100%',
+              position: 'relative',
+              overflow: 'hidden',
+              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+              '&:hover': {
+                borderColor: theme.palette.warning.main,
+                transform: 'translateY(-4px)',
+                boxShadow: `0 12px 30px -10px ${theme.palette.warning.main}30`,
+              }
+            }}>
+              {/* Animated background glow */}
+              <Box sx={{
+                position: 'absolute',
+                top: '50%',
+                right: '10%',
+                width: 150,
+                height: 150,
+                borderRadius: '50%',
+                background: `radial-gradient(circle, ${theme.palette.warning.main}20 0%, transparent 70%)`,
+                filter: 'blur(30px)',
+                animation: 'pulseGlow 3s ease-in-out infinite',
+                '@keyframes pulseGlow': {
+                  '0%, 100%': { transform: 'translate(0, -50%) scale(1)', opacity: 0.5 },
+                  '50%': { transform: 'translate(0, -50%) scale(1.2)', opacity: 0.8 }
+                }
+              }} />
+
+              <Box sx={{
+                p: 2.5,
+                height: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 3,
+                position: 'relative',
+                zIndex: 1
+              }}>
+                {/* Animated Clock Ring */}
                 <Box sx={{
-                  position: 'absolute',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: theme.palette.error.main
+                  position: 'relative',
+                  width: 90,
+                  height: 90,
+                  flexShrink: 0,
                 }}>
-                  <TrendingUpIcon sx={{ fontSize: 20 }} />
+                  {/* SVG for custom gradient ring */}
+                  <svg width="90" height="90" style={{ transform: 'rotate(-90deg)' }}>
+                    <defs>
+                      <linearGradient id="timeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stopColor={theme.palette.warning.light} />
+                        <stop offset="50%" stopColor={theme.palette.warning.main} />
+                        <stop offset="100%" stopColor={theme.palette.error.main} />
+                      </linearGradient>
+                    </defs>
+                    {/* Background ring */}
+                    <circle
+                      cx="45"
+                      cy="45"
+                      r="38"
+                      fill="none"
+                      stroke={theme.palette.action.hover}
+                      strokeWidth="8"
+                    />
+                    {/* Progress ring */}
+                    <circle
+                      cx="45"
+                      cy="45"
+                      r="38"
+                      fill="none"
+                      stroke="url(#timeGradient)"
+                      strokeWidth="8"
+                      strokeLinecap="round"
+                      strokeDasharray={`${(timeData[0]?.value || 0) / 100 * 239} 239`}
+                      style={{
+                        transition: 'stroke-dasharray 1s ease-out',
+                      }}
+                    />
+                  </svg>
+                  {/* Center content */}
+                  <Box sx={{
+                    position: 'absolute',
+                    inset: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}>
+                    <AccessTimeIcon sx={{
+                      fontSize: 28,
+                      color: theme.palette.warning.main,
+                      animation: 'gentlePulse 2s ease-in-out infinite',
+                      '@keyframes gentlePulse': {
+                        '0%, 100%': { transform: 'scale(1)' },
+                        '50%': { transform: 'scale(1.1)' }
+                      }
+                    }} />
+                  </Box>
+                </Box>
+
+                {/* Text Content */}
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  <Typography variant="h3" fontWeight={800} sx={{
+                    background: `linear-gradient(135deg, ${theme.palette.warning.light} 0%, ${theme.palette.warning.main} 50%, ${theme.palette.error.main} 100%)`,
+                    WebkitBackgroundClip: 'text',
+                    WebkitTextFillColor: 'transparent',
+                    mb: 0.5,
+                    lineHeight: 1,
+                  }}>
+                    {formattedTime}
+                  </Typography>
+                  <Typography variant="body2" fontWeight={600} color="text.primary" sx={{ mb: 0.5 }}>
+                    Time Saved
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{
+                    display: 'block',
+                    opacity: 0.7,
+                    fontSize: '0.7rem'
+                  }}>
+                    ~5 sec per file organized
+                  </Typography>
+
+                  {/* Mini stats row */}
+                  {metrics.filesOrganized > 0 && (
+                    <Box sx={{
+                      display: 'flex',
+                      gap: 1.5,
+                      mt: 1,
+                      pt: 1,
+                      borderTop: '1px solid',
+                      borderColor: 'divider'
+                    }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        <Box sx={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: '50%',
+                          bgcolor: theme.palette.warning.main
+                        }} />
+                        <Typography variant="caption" color="text.secondary">
+                          {Math.floor(metrics.timeSavedSeconds / 60)}m {metrics.timeSavedSeconds % 60}s
+                        </Typography>
+                      </Box>
+                    </Box>
+                  )}
                 </Box>
               </Box>
-            </StatsCard>
+            </Card>
           </Box>
 
           {/* Bottom 1: Activity Graph */}
