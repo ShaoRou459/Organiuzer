@@ -3,7 +3,7 @@ import {
   Box, Typography, Button, CircularProgress,
   Paper, Alert, Snackbar, IconButton, Drawer, Divider,
   List, ListItem, ListItemIcon, ListItemText, Chip, Tooltip,
-  LinearProgress, Grid
+  LinearProgress, Grid, Card, CardActionArea, Fade, useTheme
 } from '@mui/material';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -20,6 +20,7 @@ import DnDOrganizer from './DnDOrganizer';
 import FileExplorer from './FileExplorer';
 
 export default function FolderManager({ path, onBack, onOpenSettings }) {
+  const theme = useTheme();
   const [files, setFiles] = useState([]);
   const [status, setStatus] = useState('scanning'); // scanning, idle, analyzing, reviewing, executing, complete
   const [plan, setPlan] = useState(null);
@@ -134,9 +135,15 @@ export default function FolderManager({ path, onBack, onOpenSettings }) {
         itemsByCategory[cat] = items.length;
         items.forEach(item => {
           if (item.type === 'folder') totalFolders++;
-          else totalFiles++;
+          else {
+            totalFiles++;
+            totalBytes += (item.stats?.size || item.size || 0);
+          }
         });
       });
+
+      // Find top category
+      const topCategoryName = Object.entries(itemsByCategory).sort((a, b) => b[1] - a[1])[0]?.[0] || 'None';
 
       await window.electronAPI.executeOrganization(path, plan);
 
@@ -146,6 +153,8 @@ export default function FolderManager({ path, onBack, onOpenSettings }) {
         categories: itemsByCategory,
         filesMoved: totalFiles,
         foldersMoved: totalFolders,
+        totalBytes,
+        topCategoryName,
         totalItems: totalFiles + totalFolders,
       });
 
@@ -155,6 +164,14 @@ export default function FolderManager({ path, onBack, onOpenSettings }) {
       setNotification({ open: true, message: 'Failed to apply changes.', severity: 'error' });
       setStatus('reviewing');
     }
+  };
+
+  const formatBytes = (bytes) => {
+    if (!bytes) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
 
   const handleCancelReview = () => {
@@ -170,24 +187,16 @@ export default function FolderManager({ path, onBack, onOpenSettings }) {
   const fileCount = files.filter(f => f.type === 'file').length;
 
   return (
-    <Box sx={{
-      height: '100%',
-      display: 'flex',
-      flexDirection: 'column',
-      bgcolor: 'background.default'
-    }}>
-      {/* Header */}
-      <Paper
-        elevation={0}
-        sx={{
-          mx: 2,
-          mt: 1,
-          p: 2,
-          bgcolor: 'background.surfaceContainer',
-          border: '1px solid',
-          borderColor: 'divider',
-        }}
-      >
+    <Fade in={true} timeout={400}>
+      <Box sx={{
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        bgcolor: 'background.default',
+        p: 3,
+        gap: 3
+      }}>
+        {/* Header - Refined & Clean */}
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: 0, flex: 1 }}>
             {/* Back Button */}
@@ -195,541 +204,488 @@ export default function FolderManager({ path, onBack, onOpenSettings }) {
               <IconButton
                 onClick={onBack}
                 sx={{
-                  bgcolor: 'action.hover',
-                  '&:hover': { bgcolor: 'action.selected' }
+                  bgcolor: 'background.surfaceContainer',
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  '&:hover': { bgcolor: 'action.hover', borderColor: 'primary.main' }
                 }}
               >
-                <ArrowBackIcon />
+                <ArrowBackIcon fontSize="small" />
               </IconButton>
             </Tooltip>
 
-            <Box sx={{
-              p: 1.25,
-              borderRadius: 2,
-              bgcolor: 'primary.dark',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}>
-              <FolderOpenIcon sx={{ color: 'primary.main', fontSize: 24 }} />
-            </Box>
-            <Box sx={{ minWidth: 0, flex: 1 }}>
-              <Typography variant="h6" fontWeight={500} noWrap>
-                {folderName}
-              </Typography>
-              <Tooltip title={pathCopied ? "Copied!" : "Click to copy path"} placement="bottom-start">
-                <Typography
-                  variant="body2"
-                  color="text.secondary"
-                  noWrap
-                  onClick={handleCopyPath}
-                  sx={{
-                    maxWidth: '100%',
-                    cursor: 'pointer',
-                    '&:hover': {
-                      textDecoration: 'underline',
-                      color: 'primary.main',
-                    },
-                    transition: 'color 0.15s ease',
-                  }}
-                >
-                  {path}
+            {/* Folder Info */}
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, minWidth: 0 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                <Typography variant="h4" fontWeight={700} noWrap>
+                  {folderName}
                 </Typography>
-              </Tooltip>
-              <Box sx={{ display: 'flex', gap: 1, mt: 0.75 }}>
-                <Chip
-                  size="small"
-                  label={`${folderCount} folders`}
-                  variant="outlined"
-                  sx={{ borderColor: 'outlineVariant', height: 22 }}
-                />
-                <Chip
-                  size="small"
-                  label={`${fileCount} files`}
-                  variant="outlined"
-                  sx={{ borderColor: 'outlineVariant', height: 22 }}
-                />
+                <Tooltip title={pathCopied ? "Copied!" : "Click to copy path"}>
+                  <Chip
+                    size="small"
+                    label={path}
+                    onClick={handleCopyPath}
+                    icon={<FolderOpenIcon sx={{ fontSize: 14 }} />}
+                    sx={{
+                      cursor: 'pointer',
+                      bgcolor: 'background.surfaceContainer',
+                      border: '1px solid',
+                      borderColor: pathCopied ? 'success.main' : 'divider',
+                      color: pathCopied ? 'success.main' : 'text.secondary',
+                      transition: 'all 0.2s',
+                      maxWidth: 400,
+                      '&:hover': {
+                        bgcolor: 'action.hover',
+                        borderColor: 'primary.main',
+                        color: 'primary.main'
+                      }
+                    }}
+                  />
+                </Tooltip>
+              </Box>
+
+              <Box sx={{ display: 'flex', gap: 2 }}>
+                <Typography variant="caption" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: 'text.secondary', fontWeight: 500 }}>
+                  <FolderIcon sx={{ fontSize: 14 }} /> {folderCount} folders
+                </Typography>
+                <Typography variant="caption" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: 'text.secondary', fontWeight: 500 }}>
+                  <InsertDriveFileIcon sx={{ fontSize: 14 }} /> {fileCount} files
+                </Typography>
               </Box>
             </Box>
           </Box>
 
-          <Box sx={{ display: 'flex', gap: 1, ml: 2 }}>
+          {/* Actions Toolbar */}
+          <Box sx={{ display: 'flex', gap: 1, bgcolor: 'background.surfaceContainer', p: 0.75, borderRadius: 3, border: '1px solid', borderColor: 'divider' }}>
             <Tooltip title="Refresh">
               <IconButton
                 onClick={scanFolder}
                 disabled={status === 'scanning' || status === 'analyzing'}
                 size="small"
-                sx={{ bgcolor: 'action.hover' }}
+                sx={{ '&:hover': { color: 'primary.main' } }}
               >
                 <RefreshIcon fontSize="small" />
               </IconButton>
             </Tooltip>
             <Tooltip title="History">
-              <IconButton
-                onClick={() => setIsHistoryOpen(true)}
-                size="small"
-                sx={{ bgcolor: 'action.hover' }}
-              >
+              <IconButton onClick={() => setIsHistoryOpen(true)} size="small" sx={{ '&:hover': { color: 'primary.main' } }}>
                 <HistoryIcon fontSize="small" />
               </IconButton>
             </Tooltip>
             <Tooltip title="Settings">
-              <IconButton
-                onClick={onOpenSettings}
-                size="small"
-                sx={{ bgcolor: 'action.hover' }}
-              >
+              <IconButton onClick={onOpenSettings} size="small" sx={{ '&:hover': { color: 'primary.main' } }}>
                 <SettingsIcon fontSize="small" />
               </IconButton>
             </Tooltip>
           </Box>
         </Box>
-      </Paper>
 
-      {/* Main Content */}
-      <Box sx={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        minHeight: 0,
-        p: 2,
-        pt: 1.5
-      }}>
-        {/* Scanning State */}
-        {status === 'scanning' && (
-          <Paper
-            sx={{
-              flex: 1,
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'center',
-              alignItems: 'center',
-              bgcolor: 'background.surfaceContainer',
-              border: '1px solid',
-              borderColor: 'divider',
-            }}
-          >
-            <CircularProgress size={48} sx={{ mb: 2 }} />
-            <Typography variant="h6" color="text.secondary">
-              Scanning folder contents...
-            </Typography>
-          </Paper>
-        )}
+        {/* Content Area */}
+        <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
 
-        {/* Idle State - File Explorer */}
-        {status === 'idle' && (
-          <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1.5 }}>
-              <Button
-                variant="contained"
-                startIcon={<AutoAwesomeIcon />}
-                onClick={handleAnalyze}
-                disabled={files.length === 0}
-                size="large"
-              >
-                Organize with AI
-              </Button>
-            </Box>
-
-            <Paper
-              sx={{
-                flex: 1,
-                minHeight: 0,
-                display: 'flex',
-                flexDirection: 'column',
-                bgcolor: 'background.surfaceContainer',
-                border: '1px solid',
-                borderColor: 'divider',
-              }}
-            >
-              <Box sx={{ flex: 1, overflow: 'auto', p: 1 }}>
-                <FileExplorer files={files} rootPath={path} />
+          {/* Scanning State */}
+          {status === 'scanning' && (
+            <Fade in={true} timeout={500}>
+              <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', pb: 8 }}>
+                <DashboardCard sx={{ width: '100%', maxWidth: 600, height: 'auto', minHeight: 360, display: 'flex', flexDirection: 'column' }}>
+                  <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, py: 6 }}>
+                    <Box sx={{ position: 'relative' }}>
+                      <CircularProgress size={80} thickness={3} sx={{ color: 'primary.main' }} />
+                      <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <FolderOpenIcon sx={{ fontSize: 32, color: 'primary.main' }} />
+                      </Box>
+                    </Box>
+                    <Box sx={{ textAlign: 'center' }}>
+                      <Typography variant="h5" fontWeight={700} gutterBottom>Scanning Folder</Typography>
+                      <Typography variant="body1" color="text.secondary">Reading file structure...</Typography>
+                    </Box>
+                  </Box>
+                </DashboardCard>
               </Box>
-            </Paper>
-          </Box>
-        )}
+            </Fade>
+          )}
 
-        {/* Analyzing State */}
-        {status === 'analyzing' && (
-          <Paper
-            sx={{
-              flex: 1,
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'center',
-              alignItems: 'center',
-              bgcolor: 'background.surfaceContainer',
-              border: '1px solid',
-              borderColor: 'divider',
-              gap: 2
-            }}
-          >
-            <Box sx={{ position: 'relative', display: 'inline-flex' }}>
-              <CircularProgress size={80} thickness={2} />
-              <Box sx={{
-                top: 0, left: 0, bottom: 0, right: 0,
-                position: 'absolute',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}>
-                <AutoAwesomeIcon sx={{ fontSize: 32, color: 'primary.main' }} />
-              </Box>
-            </Box>
-            <Typography variant="h5">Analyzing your files...</Typography>
-            <Typography variant="body1" color="text.secondary">
-              AI is determining the best organization structure
-            </Typography>
-            <LinearProgress sx={{ width: 300, mt: 2, borderRadius: 1 }} />
-          </Paper>
-        )}
+          {/* Idle State - File Explorer & Action */}
+          {status === 'idle' && (
+            <Fade in={true} timeout={500}>
+              <Box sx={{ height: '100%', display: 'grid', gridTemplateRows: '1fr auto', gap: 3 }}>
+                <DashboardCard title="Folder Contents" icon={<FolderIcon />} color={theme.palette.primary.main}>
+                  <Box sx={{ flex: 1, overflow: 'auto', mt: 1 }}>
+                    <FileExplorer files={files} rootPath={path} />
+                  </Box>
+                </DashboardCard>
 
-        {/* Reviewing State - Organization Plan */}
-        {status === 'reviewing' && plan && (
-          <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-            <Box sx={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              mb: 1.5
-            }}>
-              <Box>
-                <Typography variant="h5" fontWeight={500}>
-                  Organization Plan
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Drag and drop items between categories to customize
-                </Typography>
-              </Box>
-              <Box sx={{ display: 'flex', gap: 1.5 }}>
-                <Button
-                  onClick={handleCancelReview}
-                  color="inherit"
-                  variant="outlined"
-                  sx={{ borderColor: 'outlineVariant' }}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  variant="contained"
-                  color="success"
-                  startIcon={<CheckCircleIcon />}
-                  onClick={handleApply}
-                  size="large"
-                >
-                  Apply Changes
-                </Button>
-              </Box>
-            </Box>
-
-            <Paper
-              sx={{
-                flex: 1,
-                minHeight: 0,
-                display: 'flex',
-                flexDirection: 'column',
-                bgcolor: 'background.surfaceContainer',
-                border: '1px solid',
-                borderColor: 'divider',
-              }}
-            >
-              <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
-                <DnDOrganizer plan={plan} setPlan={setPlan} />
-              </Box>
-            </Paper>
-          </Box>
-        )}
-
-        {/* Executing State */}
-        {status === 'executing' && (
-          <Paper
-            sx={{
-              flex: 1,
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'center',
-              alignItems: 'center',
-              bgcolor: 'background.surfaceContainer',
-              border: '1px solid',
-              borderColor: 'divider',
-              gap: 2
-            }}
-          >
-            <CircularProgress size={64} color="success" />
-            <Typography variant="h5">Organizing files...</Typography>
-            <Typography variant="body1" color="text.secondary">
-              Moving files to their new locations
-            </Typography>
-          </Paper>
-        )}
-
-        {/* Complete State */}
-        {status === 'complete' && completionStats && (
-          <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'auto' }}>
-            {/* Success Header */}
-            <Paper
-              sx={{
-                p: 4,
-                mb: 2,
-                bgcolor: 'background.surfaceContainer',
-                border: '1px solid',
-                borderColor: 'success.main',
-                textAlign: 'center',
-              }}
-            >
-              <Box sx={{
-                width: 80,
-                height: 80,
-                borderRadius: '50%',
-                bgcolor: 'success.dark',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                mx: 'auto',
-                mb: 2
-              }}>
-                <CheckCircleIcon sx={{ fontSize: 48, color: 'success.main' }} />
-              </Box>
-              <Typography variant="h4" gutterBottom>
-                Organization Complete!
-              </Typography>
-              <Typography variant="body1" color="text.secondary">
-                Successfully organized {completionStats.totalItems} items into {completionStats.categoriesCreated} categories
-              </Typography>
-            </Paper>
-
-            {/* Stats Grid */}
-            <Grid container spacing={2} sx={{ mb: 2 }}>
-              <Grid size={{ xs: 12, sm: 4 }}>
-                <Paper sx={{
-                  p: 3,
-                  bgcolor: 'background.surfaceContainer',
-                  border: '1px solid',
-                  borderColor: 'divider',
-                  textAlign: 'center'
-                }}>
-                  <FolderIcon sx={{ fontSize: 40, color: 'primary.main', mb: 1 }} />
-                  <Typography variant="h4" fontWeight={600}>
-                    {completionStats.categoriesCreated}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Categories
-                  </Typography>
-                </Paper>
-              </Grid>
-              <Grid size={{ xs: 12, sm: 4 }}>
-                <Paper sx={{
-                  p: 3,
-                  bgcolor: 'background.surfaceContainer',
-                  border: '1px solid',
-                  borderColor: 'divider',
-                  textAlign: 'center'
-                }}>
-                  <InsertDriveFileIcon sx={{ fontSize: 40, color: 'secondary.main', mb: 1 }} />
-                  <Typography variant="h4" fontWeight={600}>
-                    {completionStats.filesMoved}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Files Moved
-                  </Typography>
-                </Paper>
-              </Grid>
-              <Grid size={{ xs: 12, sm: 4 }}>
-                <Paper sx={{
-                  p: 3,
-                  bgcolor: 'background.surfaceContainer',
-                  border: '1px solid',
-                  borderColor: 'divider',
-                  textAlign: 'center'
-                }}>
-                  <FolderOpenIcon sx={{ fontSize: 40, color: 'warning.main', mb: 1 }} />
-                  <Typography variant="h4" fontWeight={600}>
-                    {completionStats.foldersMoved}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Folders Moved
-                  </Typography>
-                </Paper>
-              </Grid>
-            </Grid>
-
-            {/* Category Breakdown */}
-            <Paper sx={{
-              p: 3,
-              mb: 2,
-              bgcolor: 'background.surfaceContainer',
-              border: '1px solid',
-              borderColor: 'divider',
-            }}>
-              <Typography variant="h6" gutterBottom>
-                Category Breakdown
-              </Typography>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                {Object.entries(completionStats.categories).map(([category, count]) => (
-                  <Chip
-                    key={category}
-                    icon={<FolderIcon />}
-                    label={`${category}: ${count} items`}
+                <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <Button
+                    variant="contained"
+                    onClick={handleAnalyze}
+                    disabled={files.length === 0}
+                    startIcon={<AutoAwesomeIcon />}
                     sx={{
-                      bgcolor: 'background.paper',
-                      border: '1px solid',
-                      borderColor: 'divider',
+                      fontSize: '1.1rem',
+                      py: 1.5,
+                      px: 4,
+                      borderRadius: 4,
+                      textTransform: 'none',
+                      fontWeight: 700,
+                      boxShadow: `0 8px 25px ${theme.palette.primary.main}50`,
+                      '&:hover': {
+                        boxShadow: `0 12px 35px ${theme.palette.primary.main}70`,
+                        transform: 'translateY(-2px)'
+                      },
+                      transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)'
                     }}
-                  />
-                ))}
+                  >
+                    Organize with AI
+                  </Button>
+                </Box>
               </Box>
-            </Paper>
+            </Fade>
+          )}
 
-            {/* Tips */}
-            <Paper sx={{
-              p: 3,
-              mb: 2,
-              bgcolor: 'background.surfaceContainerHigh',
-              border: '1px solid',
-              borderColor: 'divider',
-            }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                <TipsAndUpdatesIcon sx={{ color: 'warning.main' }} />
-                <Typography variant="h6">Tips</Typography>
+          {/* Analyzing State */}
+          {status === 'analyzing' && (
+            <Fade in={true} timeout={500}>
+              <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', pb: 8 }}>
+                <DashboardCard color={theme.palette.secondary.main} sx={{ width: '100%', maxWidth: 640, height: 'auto', minHeight: 400, display: 'flex', flexDirection: 'column' }}>
+                  <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 5, py: 6 }}>
+                    <Box sx={{ position: 'relative', display: 'inline-flex' }}>
+                      {/* Pulping Effect */}
+                      <Box sx={{
+                        position: 'absolute', inset: -24, borderRadius: '50%',
+                        bgcolor: theme.palette.secondary.main + '20',
+                        animation: 'pulse 2s infinite'
+                      }} />
+                      <CircularProgress size={90} thickness={3} sx={{ color: 'secondary.main' }} />
+                      <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <AutoAwesomeIcon sx={{ fontSize: 36, color: 'secondary.main' }} />
+                      </Box>
+                    </Box>
+                    <Box sx={{ textAlign: 'center', maxWidth: 460 }}>
+                      <Typography variant="h4" fontWeight={800} gutterBottom>Analyzing Files</Typography>
+                      <Typography variant="body1" color="text.secondary" paragraph sx={{ fontSize: '1.1rem' }}>
+                        AI is determining the optimal structure based on file types, names, and content.
+                      </Typography>
+                      <LinearProgress sx={{ height: 6, borderRadius: 3, mt: 3, bgcolor: 'action.hover', '& .MuiLinearProgress-bar': { bgcolor: 'secondary.main' } }} />
+                    </Box>
+                  </Box>
+                </DashboardCard>
               </Box>
-              <List dense disablePadding>
-                <ListItem sx={{ px: 0 }}>
-                  <ListItemIcon sx={{ minWidth: 32 }}>
-                    <CheckCircleIcon fontSize="small" color="success" />
-                  </ListItemIcon>
-                  <ListItemText
-                    primary="Run again anytime to organize new files"
-                    secondary="The AI will recognize existing categories and add new files to them"
-                  />
-                </ListItem>
-                <ListItem sx={{ px: 0 }}>
-                  <ListItemIcon sx={{ minWidth: 32 }}>
-                    <CheckCircleIcon fontSize="small" color="success" />
-                  </ListItemIcon>
-                  <ListItemText
-                    primary="Customize before applying"
-                    secondary="Drag items between categories in the review screen to fine-tune organization"
-                  />
-                </ListItem>
-                <ListItem sx={{ px: 0 }}>
-                  <ListItemIcon sx={{ minWidth: 32 }}>
-                    <CheckCircleIcon fontSize="small" color="success" />
-                  </ListItemIcon>
-                  <ListItemText
-                    primary="Check the history"
-                    secondary="View all past file movements in the history panel"
-                  />
-                </ListItem>
-              </List>
-            </Paper>
+            </Fade>
+          )}
 
-            {/* Action Button */}
-            <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2, mt: 'auto', pt: 2 }}>
-              <Button
-                variant="outlined"
-                onClick={() => setIsHistoryOpen(true)}
-                startIcon={<HistoryIcon />}
-              >
-                View History
-              </Button>
-              <Button
-                variant="contained"
-                onClick={() => {
-                  setCompletionStats(null);
-                  setPlan(null);
-                  scanFolder();
-                }}
-                size="large"
-              >
-                View Organized Folder
-              </Button>
-            </Box>
-          </Box>
-        )}
-      </Box>
-
-      {/* History Drawer */}
-      <Drawer
-        anchor="right"
-        open={isHistoryOpen}
-        onClose={() => setIsHistoryOpen(false)}
-        PaperProps={{
-          sx: {
-            width: 380,
-            bgcolor: 'background.surfaceContainer',
-          }
-        }}
-      >
-        <Box sx={{ p: 3 }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h6">Action History</Typography>
-            <IconButton onClick={() => setIsHistoryOpen(false)} size="small">
-              <CloseIcon />
-            </IconButton>
-          </Box>
-          <Divider sx={{ mb: 2 }} />
-
-          {history.length > 0 ? (
-            <List disablePadding>
-              {history.slice(0, 50).map((item, index) => (
-                <ListItem
-                  key={index}
-                  sx={{
-                    px: 2,
-                    py: 1.5,
-                    mb: 1,
-                    bgcolor: 'background.paper',
-                    borderRadius: 2,
-                    border: '1px solid',
-                    borderColor: 'divider'
-                  }}
+          {/* Reviewing State - Organization Plan */}
+          {status === 'reviewing' && plan && (
+            <Fade in={true} timeout={500}>
+              <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <DashboardCard title="Organization Plan" icon={<TipsAndUpdatesIcon />} color={theme.palette.info.main}
+                  headerAction={
+                    <Box sx={{ display: 'flex', gap: 1 }}>
+                      <Button onClick={handleCancelReview} color="inherit" sx={{ color: 'text.secondary' }}>Cancel</Button>
+                      <Button variant="contained" color="success" startIcon={<CheckCircleIcon />} onClick={handleApply} sx={{ borderRadius: 4, px: 3 }}>
+                        Apply Changes
+                      </Button>
+                    </Box>
+                  }
                 >
-                  <ListItemIcon sx={{ minWidth: 40 }}>
-                    <HistoryIcon fontSize="small" color="action" />
-                  </ListItemIcon>
-                  <ListItemText
-                    primary={item.name}
-                    secondary={`Moved to ${item.category}`}
-                    primaryTypographyProps={{
-                      variant: 'body2',
-                      fontWeight: 500,
-                      noWrap: true
-                    }}
-                    secondaryTypographyProps={{ variant: 'caption' }}
-                  />
-                </ListItem>
-              ))}
-            </List>
-          ) : (
-            <Box sx={{
-              py: 8,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              color: 'text.disabled'
-            }}>
-              <HistoryIcon sx={{ fontSize: 48, mb: 2 }} />
-              <Typography variant="body2">No history yet</Typography>
+                  <Box sx={{ flex: 1, overflow: 'auto', mt: 1 }}>
+                    <DnDOrganizer plan={plan} setPlan={setPlan} />
+                  </Box>
+                </DashboardCard>
+              </Box>
+            </Fade>
+          )}
+
+          {/* Executing State */}
+          {status === 'executing' && (
+            <Fade in={true} timeout={500}>
+              <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', pb: 8 }}>
+                <DashboardCard color={theme.palette.success.main} sx={{ width: '100%', maxWidth: 600, height: 'auto', minHeight: 360, display: 'flex', flexDirection: 'column' }}>
+                  <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, py: 6 }}>
+                    <Box sx={{ position: 'relative', display: 'inline-flex' }}>
+                      <Box sx={{
+                        position: 'absolute', inset: -16, borderRadius: '50%',
+                        bgcolor: theme.palette.success.main + '20',
+                        animation: 'pulse 1.5s infinite'
+                      }} />
+                      <CircularProgress size={80} thickness={3} sx={{ color: 'success.main' }} />
+                      <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <CheckCircleIcon sx={{ fontSize: 32, color: 'success.main' }} />
+                      </Box>
+                    </Box>
+                    <Box sx={{ textAlign: 'center' }}>
+                      <Typography variant="h5" fontWeight={700} gutterBottom>Moving Files</Typography>
+                      <Typography variant="body1" color="text.secondary">
+                        Applying your organization plan...
+                      </Typography>
+                    </Box>
+                  </Box>
+                </DashboardCard>
+              </Box>
+            </Fade>
+          )}
+
+          {/* Complete State - Dashboard Grid */}
+          {status === 'complete' && completionStats && (
+            <Fade in={true} timeout={500}>
+              <Box sx={{ height: '100%', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)', gridTemplateRows: 'auto auto auto', gap: 3, overflow: 'auto' }}>
+
+                {/* Header Banner - Spans all columns */}
+                <Box sx={{ gridColumn: 'span 3' }}>
+                  <DashboardCard color={theme.palette.success.main} sx={{ minHeight: 90, flexDirection: 'row', alignItems: 'center' }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 3, p: 0.5 }}>
+                      <Box sx={{
+                        width: 56, height: 56, borderRadius: '50%',
+                        bgcolor: 'success.light', color: 'success.dark',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center'
+                      }}>
+                        <CheckCircleIcon sx={{ fontSize: 32 }} />
+                      </Box>
+                      <Box>
+                        <Typography variant="h5" fontWeight={800} gutterBottom sx={{ lineHeight: 1.1 }}>Organization Complete!</Typography>
+                        <Typography variant="body2" color="text.secondary" fontWeight={500}>
+                          Successfully processed {completionStats.totalItems} items.
+                        </Typography>
+                      </Box>
+                    </Box>
+                  </DashboardCard>
+                </Box>
+
+                {/* Stat Cards - Small & Compact - Grid Row 2 */}
+                <DashboardCard title="Categories" icon={<FolderIcon />} color={theme.palette.primary.main} sx={{ minHeight: 160 }}>
+                  <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', mt: 1 }}>
+                    <Typography variant="h3" fontWeight={800}>{completionStats.categoriesCreated}</Typography>
+                    <Box>
+                      <Typography variant="body2" color="text.secondary" fontWeight={600}>Created</Typography>
+                      <Typography variant="caption" color="primary.main" fontWeight={500} sx={{ display: 'block', mt: 0.5 }}>
+                        Top: {completionStats.topCategoryName}
+                      </Typography>
+                    </Box>
+                  </Box>
+                </DashboardCard>
+
+                <DashboardCard title="Files Moved" icon={<InsertDriveFileIcon />} color={theme.palette.secondary.main} sx={{ minHeight: 160 }}>
+                  <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', mt: 1 }}>
+                    <Typography variant="h3" fontWeight={800}>{completionStats.filesMoved}</Typography>
+                    <Box>
+                      <Typography variant="body2" color="text.secondary" fontWeight={600}>Total Files</Typography>
+                      <Typography variant="caption" color="secondary.main" fontWeight={500} sx={{ display: 'block', mt: 0.5 }}>
+                        {formatBytes(completionStats.totalBytes)} Processed
+                      </Typography>
+                    </Box>
+                  </Box>
+                </DashboardCard>
+
+                <DashboardCard title="Folders Moved" icon={<FolderOpenIcon />} color={theme.palette.warning.main} sx={{ minHeight: 160 }}>
+                  <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', mt: 1 }}>
+                    <Typography variant="h3" fontWeight={800}>{completionStats.foldersMoved}</Typography>
+                    <Box>
+                      <Typography variant="body2" color="text.secondary" fontWeight={600}>Folders</Typography>
+                      <Typography variant="caption" color="warning.main" fontWeight={500} sx={{ display: 'block', mt: 0.5 }}>
+                        Structure Cleaned
+                      </Typography>
+                    </Box>
+                  </Box>
+                </DashboardCard>
+
+                {/* Details & Actions - Grid Row 3 (Spans all) */}
+                <Box sx={{ gridColumn: 'span 3', display: 'flex', gap: 2, minHeight: 0 }}>
+                  {/* Category List */}
+                  <Box sx={{ flex: 2, minHeight: 0 }}>
+                    <DashboardCard title="Breakdown" icon={<TipsAndUpdatesIcon />} color={theme.palette.info.main}>
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1, overflow: 'auto', alignContent: 'flex-start' }}>
+                        {Object.entries(completionStats.categories).map(([category, count]) => (
+                          <Chip key={category} label={`${category} (${count})`}
+                            sx={{ bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider' }}
+                          />
+                        ))}
+                      </Box>
+                    </DashboardCard>
+                  </Box>
+
+                  {/* Next Actions */}
+                  <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <Button
+                      variant="outlined" fullWidth
+                      startIcon={<HistoryIcon />}
+                      onClick={() => setIsHistoryOpen(true)}
+                      sx={{ borderRadius: 4, border: '1px solid', borderColor: 'divider', py: 2 }}
+                    >
+                      History
+                    </Button>
+                    <Button
+                      variant="contained" fullWidth
+                      onClick={onBack}
+                      sx={{ borderRadius: 4, bgcolor: 'primary.main', fontSize: '1.1rem', fontWeight: 700, py: 2 }}
+                    >
+                      Done
+                    </Button>
+                  </Box>
+                </Box>
+              </Box>
+            </Fade>
+          )}
+
+          {/* History Drawer */}
+          < Drawer
+            anchor="right"
+            open={isHistoryOpen}
+            onClose={() => setIsHistoryOpen(false)}
+            PaperProps={{
+              sx: {
+                width: 380,
+                bgcolor: 'background.surfaceContainer',
+              }
+            }}
+          >
+            <Box sx={{ p: 3 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                <Typography variant="h6">Action History</Typography>
+                <IconButton onClick={() => setIsHistoryOpen(false)} size="small">
+                  <CloseIcon />
+                </IconButton>
+              </Box>
+              <Divider sx={{ mb: 2 }} />
+
+              {history.length > 0 ? (
+                <List disablePadding>
+                  {history.slice(0, 50).map((item, index) => (
+                    <ListItem
+                      key={index}
+                      sx={{
+                        px: 2,
+                        py: 1.5,
+                        mb: 1,
+                        bgcolor: 'background.paper',
+                        borderRadius: 2,
+                        border: '1px solid',
+                        borderColor: 'divider'
+                      }}
+                    >
+                      <ListItemIcon sx={{ minWidth: 40 }}>
+                        <HistoryIcon fontSize="small" color="action" />
+                      </ListItemIcon>
+                      <ListItemText
+                        primary={item.name}
+                        secondary={`Moved to ${item.category}`}
+                        primaryTypographyProps={{
+                          variant: 'body2',
+                          fontWeight: 500,
+                          noWrap: true
+                        }}
+                        secondaryTypographyProps={{ variant: 'caption' }}
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+              ) : (
+                <Box sx={{
+                  py: 8,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  color: 'text.disabled'
+                }}>
+                  <HistoryIcon sx={{ fontSize: 48, mb: 2 }} />
+                  <Typography variant="body2">No history yet</Typography>
+                </Box>
+              )}
+            </Box>
+          </Drawer >
+
+          {/* Notification */}
+          < Snackbar
+            open={notification.open}
+            autoHideDuration={6000}
+            onClose={() => setNotification({ ...notification, open: false })}
+            anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+          >
+            <Alert
+              severity={notification.severity}
+              onClose={() => setNotification({ ...notification, open: false })}
+              sx={{ borderRadius: 2 }}
+            >
+              {notification.message}
+            </Alert>
+          </Snackbar>
+        </Box>
+      </Box>
+    </Fade>
+  );
+}
+
+function DashboardCard({ title, icon, color, children, headerAction, elevation = 0, onClick, sx = {} }) {
+  // Common visual consistency
+  const CardContentWrapper = onClick ? CardActionArea : Box;
+  const wrapperProps = onClick ? { onClick, sx: { height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'stretch' } } : { sx: { height: '100%', display: 'flex', flexDirection: 'column' } };
+
+  return (
+    <Card
+      elevation={elevation}
+      sx={{
+        bgcolor: 'background.surfaceContainer',
+        border: '1px solid',
+        borderColor: 'divider',
+        borderRadius: '24px',
+        position: 'relative',
+        overflow: 'hidden',
+        transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+        '&:hover': {
+          borderColor: color ? color : 'divider',
+          boxShadow: color ? `0 12px 30px -10px ${color}30` : undefined,
+          cursor: onClick ? 'pointer' : 'default',
+          '& .icon-box-inner': {
+            transform: 'scale(1.1)',
+            bgcolor: color,
+            color: '#fff'
+          }
+        },
+        ...sx
+      }}
+    >
+      <CardContentWrapper {...wrapperProps}>
+        <Box sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column', zIndex: 1, flex: 1 }}>
+          {/* Unified Header: Icon (Left) --- Action (Right) */}
+          {(icon || title || headerAction) && (
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: children ? 2 : 0 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                {icon && (
+                  <Box className="icon-box-inner" sx={{
+                    p: 1.2,
+                    borderRadius: '16px',
+                    bgcolor: color ? `${color}15` : 'action.hover',
+                    color: color || 'text.primary',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    transition: 'all 0.3s ease'
+                  }}>
+                    {React.cloneElement(icon, { sx: { fontSize: 26 } })}
+                  </Box>
+                )}
+                {title && (
+                  <Typography variant="h6" fontWeight={700}>
+                    {title}
+                  </Typography>
+                )}
+              </Box>
+              <Box>
+                {headerAction}
+              </Box>
             </Box>
           )}
-        </Box>
-      </Drawer>
 
-      {/* Notification */}
-      <Snackbar
-        open={notification.open}
-        autoHideDuration={6000}
-        onClose={() => setNotification({ ...notification, open: false })}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
-        <Alert
-          severity={notification.severity}
-          onClose={() => setNotification({ ...notification, open: false })}
-          sx={{ borderRadius: 2 }}
-        >
-          {notification.message}
-        </Alert>
-      </Snackbar>
-    </Box>
+          {/* Content */}
+          {children}
+        </Box>
+
+        {/* Decorative Blob */}
+        {color && (
+          <Box sx={{
+            position: 'absolute', top: -40, right: -40, width: 140, height: 140, borderRadius: '50%',
+            background: `radial-gradient(circle, ${color}15 0%, transparent 70%)`,
+            pointerEvents: 'none', zIndex: 0
+          }} />
+        )}
+      </CardContentWrapper>
+    </Card>
   );
 }

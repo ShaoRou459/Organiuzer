@@ -13,9 +13,10 @@ import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import HistoryIcon from '@mui/icons-material/History';
 import FolderIcon from '@mui/icons-material/Folder';
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
+import DonutLargeIcon from '@mui/icons-material/DonutLarge';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid,
-  BarChart, Bar, Cell, RadialBarChart, RadialBar, PolarAngleAxis
+  BarChart, Bar, Cell, RadialBarChart, RadialBar, PolarAngleAxis, PieChart, Pie
 } from 'recharts';
 import pkg from '../../../../package.json';
 
@@ -146,6 +147,34 @@ export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiCo
     return [{ name: 'Time', value: value, fill: theme.palette.error.main }];
   }, [metrics.timeSavedSeconds, theme.palette.error.main]);
 
+  // CATEGORY BREAKDOWN DATA (New Widget)
+  const categoryData = useMemo(() => {
+    // If we have no recent activity, return empty
+    if (!recentActivity || recentActivity.length === 0) return [];
+
+    // Count frequencies
+    const counts = {};
+    recentActivity.forEach(item => {
+      const cat = item.category || 'Other';
+      counts[cat] = (counts[cat] || 0) + 1;
+    });
+
+    const colors = [
+      theme.palette.primary.main,
+      theme.palette.secondary.main,
+      theme.palette.error.main,
+      theme.palette.warning.main,
+      theme.palette.info.main,
+      theme.palette.success.main
+    ];
+
+    return Object.entries(counts).map(([name, value], index) => ({
+      name,
+      value,
+      color: colors[index % colors.length]
+    })).sort((a, b) => b.value - a.value); // Sort max first
+  }, [recentActivity, theme.palette]);
+
   // Format helpers
   const formattedBytes = useMemo(() => {
     if (!metrics.bytesOrganized) return '0 B';
@@ -193,7 +222,7 @@ export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiCo
 
   return (
     <Fade in={true} timeout={600}>
-      <Container maxWidth={false} sx={{ height: '100%', display: 'flex', flexDirection: 'column', p: 3 }}>
+      <Container maxWidth={false} sx={{ height: '100%', display: 'flex', flexDirection: 'column', p: 3, overflowY: 'auto' }}>
 
         {/* Main Grid Layout - Full Screen Cluster */}
         <Box sx={{
@@ -201,7 +230,7 @@ export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiCo
           width: '100%',
           height: '100%',
           gridTemplateColumns: { xs: '1fr', md: '1fr 0.6fr 0.6fr 1fr' },
-          gridTemplateRows: { xs: 'auto', md: '1fr 1.5fr 1fr' },
+          gridTemplateRows: { xs: 'auto', md: 'minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr)' },
           gap: 2,
           gridTemplateAreas: {
             xs: `
@@ -218,7 +247,7 @@ export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiCo
             md: `
               "left title title right1"
               "left start start right2"
-              "bot1 bot2 bot3 bot4"
+              "bot2 bot2 bot3 bot4"
             `
           }
         }}>
@@ -432,41 +461,114 @@ export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiCo
             </Card>
           </Box>
 
-          {/* Left Stats Card (Files) - With Smooth Sparkline */}
-          <Box sx={{ gridArea: 'left' }}>
-            <StatsCard
-              title="Files Organized"
-              value={metrics.filesOrganized?.toLocaleString() || '0'}
-              icon={<AutoAwesomeIcon fontSize="large" />}
+          {/* Left Column: Split into Merged Analytics (Top) and New Composition (Bottom) */}
+          <Box sx={{ gridArea: 'left', display: 'flex', flexDirection: 'column', gap: 2 }}>
+
+            {/* 1. Merged Analytics Widget (50%) */}
+            <DashboardCard
+              title="Analytics"
               color={theme.palette.primary.main}
-              trend={trendData.trend}
-              trendDirection={trendData.direction}
-              fullHeight
+              icon={<AutoAwesomeIcon />}
+              headerAction={
+                trendData.trend && (
+                  <TrendBadge direction={trendData.direction} label={trendData.trend} />
+                )
+              }
             >
-              {/* Smooth Sparkline for recent files */}
-              {recentFilesData.length > 0 && (
-                <Box sx={{ height: 50, width: '100%', mt: 1, opacity: 1, maskImage: 'linear-gradient(to right, transparent, black 10%)' }}>
+              <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                {/* Big Number */}
+                <Typography variant="h3" fontWeight={800} sx={{ letterSpacing: '-0.02em', mb: 0.5 }}>
+                  {metrics.filesOrganized?.toLocaleString() || '0'}
+                </Typography>
+                <Typography variant="body2" color="text.secondary" fontWeight={600} sx={{ mb: 2 }}>
+                  Total Files Organized
+                </Typography>
+
+                {/* The Chart - Now embedded here */}
+                <Box sx={{ flex: 1, width: '100%', minHeight: 0 }}>
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={recentFilesData}>
+                    <AreaChart data={activityData} margin={{ top: 5, right: 0, left: -20, bottom: 0 }}>
                       <defs>
-                        <linearGradient id="colorFiles" x1="0" y1="0" x2="0" y2="1">
+                        <linearGradient id="colorFilesLeft" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor={theme.palette.primary.main} stopOpacity={0.3} />
                           <stop offset="95%" stopColor={theme.palette.primary.main} stopOpacity={0} />
                         </linearGradient>
                       </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke={theme.palette.divider} vertical={false} opacity={0.3} />
+                      <XAxis hide />
+                      <YAxis hide />
+                      <RechartsTooltip content={<CustomTooltip />} />
                       <Area
                         type="monotone"
                         dataKey="files"
                         stroke={theme.palette.primary.main}
                         strokeWidth={3}
-                        fill="url(#colorFiles)"
+                        fill="url(#colorFilesLeft)"
                         isAnimationActive={true}
                       />
                     </AreaChart>
                   </ResponsiveContainer>
                 </Box>
-              )}
-            </StatsCard>
+              </Box>
+            </DashboardCard>
+
+            {/* 2. New Widget: Composition (50%) */}
+            <DashboardCard
+              title="Composition"
+              color={theme.palette.secondary.main}
+              icon={<DonutLargeIcon />}
+            >
+              <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+                {categoryData.length > 0 ? (
+                  <>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={categoryData}
+                          innerRadius={35}
+                          outerRadius={55}
+                          paddingAngle={5}
+                          dataKey="value"
+                        >
+                          {categoryData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} stroke="none" />
+                          ))}
+                        </Pie>
+                        <RechartsTooltip
+                          content={({ active, payload }) => {
+                            if (active && payload && payload.length) {
+                              return (
+                                <Box sx={{ bgcolor: 'background.paper', p: 1, borderRadius: 1, boxShadow: 3, border: '1px solid', borderColor: 'divider' }}>
+                                  <Typography variant="caption" fontWeight={700} color="text.primary">
+                                    {payload[0].name}: {payload[0].value}
+                                  </Typography>
+                                </Box>
+                              );
+                            }
+                            return null;
+                          }}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+
+                    {/* Legend floating */}
+                    <Box sx={{ position: 'absolute', bottom: 0, right: 0, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                      {categoryData.slice(0, 3).map((cat, i) => (
+                        <Box key={i} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                          <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: cat.color }} />
+                          <Typography variant="caption" sx={{ fontSize: '0.65rem', opacity: 0.8 }}>
+                            {cat.name}
+                          </Typography>
+                        </Box>
+                      ))}
+                    </Box>
+                  </>
+                ) : (
+                  <Typography variant="caption" color="text.secondary">No data yet</Typography>
+                )}
+              </Box>
+            </DashboardCard>
+
           </Box>
 
           {/* Center Start Button Area */}
@@ -504,368 +606,169 @@ export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiCo
 
           {/* Right Top Card (Space) - With Smooth Sparkline */}
           <Box sx={{ gridArea: 'right1' }}>
-            <StatsCard
+            <DashboardCard
               title="Space Processed"
-              value={formattedBytes}
+              color={theme.palette.secondary.main}
               icon={<StorageIcon />}
-              color={theme.palette.secondary.main} // Changed to secondary for variety
             >
-              {/* Smooth Sparkline for space */}
-              {spaceData.length > 0 && (
-                <Box sx={{ height: 50, width: '100%', mt: 1, opacity: 0.8 }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={spaceData}>
-                      <defs>
-                        <linearGradient id="colorSpace" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor={theme.palette.secondary.main} stopOpacity={0.3} />
-                          <stop offset="95%" stopColor={theme.palette.secondary.main} stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <Area
-                        type="monotone"
-                        dataKey="bytes"
-                        stroke={theme.palette.secondary.main}
-                        fill="url(#colorSpace)"
-                        strokeWidth={2}
-                        isAnimationActive={true}
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
+              <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                <Box>
+                  <Typography variant="h3" fontWeight={800} sx={{ letterSpacing: '-0.02em', mb: 0.5 }}>
+                    {formattedBytes}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" fontWeight={600}>
+                    Recovered
+                  </Typography>
                 </Box>
-              )}
-            </StatsCard>
+                {/* Smooth Sparkline for space */}
+                {spaceData.length > 0 && (
+                  <Box sx={{ height: 50, width: '100%', mt: 1, opacity: 0.8 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={spaceData}>
+                        <defs>
+                          <linearGradient id="colorSpace" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor={theme.palette.secondary.main} stopOpacity={0.3} />
+                            <stop offset="95%" stopColor={theme.palette.secondary.main} stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <Area
+                          type="monotone"
+                          dataKey="bytes"
+                          stroke={theme.palette.secondary.main}
+                          fill="url(#colorSpace)"
+                          strokeWidth={2}
+                          isAnimationActive={true}
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </Box>
+                )}
+              </Box>
+            </DashboardCard>
           </Box>
 
           {/* Right Bottom Card (Time) - Premium Clock Design */}
           <Box sx={{ gridArea: 'right2' }}>
-            <Card elevation={0} sx={{
-              bgcolor: 'background.surfaceContainer',
-              border: '1px solid',
-              borderColor: 'divider',
-              borderRadius: '24px',
-              height: '100%',
-              position: 'relative',
-              overflow: 'hidden',
-              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-              '&:hover': {
-                borderColor: theme.palette.warning.main,
-                transform: 'translateY(-4px)',
-                boxShadow: `0 12px 30px -10px ${theme.palette.warning.main}30`,
+            <DashboardCard
+              title="Time Saved"
+              color={theme.palette.warning.main}
+              icon={<AccessTimeIcon />}
+              headerAction={
+                metrics.filesOrganized > 0 && (
+                  <Typography variant="caption" sx={{
+                    bgcolor: theme.palette.warning.main + '20',
+                    color: theme.palette.warning.main,
+                    px: 1, py: 0.5, borderRadius: 2, fontWeight: 700
+                  }}>
+                    ~5s / file
+                  </Typography>
+                )
               }
-            }}>
-              {/* Animated background glow */}
+            >
               <Box sx={{
-                position: 'absolute',
-                top: '50%',
-                right: '10%',
-                width: 150,
-                height: 150,
-                borderRadius: '50%',
-                background: `radial-gradient(circle, ${theme.palette.warning.main}20 0%, transparent 70%)`,
-                filter: 'blur(30px)',
-                animation: 'pulseGlow 3s ease-in-out infinite',
-                '@keyframes pulseGlow': {
-                  '0%, 100%': { transform: 'translate(0, -50%) scale(1)', opacity: 0.5 },
-                  '50%': { transform: 'translate(0, -50%) scale(1.2)', opacity: 0.8 }
-                }
-              }} />
-
-              <Box sx={{
-                p: 2.5,
-                height: '100%',
                 display: 'flex',
                 alignItems: 'center',
-                gap: 3,
-                position: 'relative',
-                zIndex: 1
+                justifyContent: 'center', // Center the content cluster
+                gap: 3, // More breathing room between ring and text
+                height: '100%',
+                width: '100%',
+                mt: 1,
+                pb: 1 // Visual balance
               }}>
-                {/* Animated Clock Ring */}
-                <Box sx={{
-                  position: 'relative',
-                  width: 90,
-                  height: 90,
-                  flexShrink: 0,
-                }}>
-                  {/* SVG for custom gradient ring */}
-                  <svg width="90" height="90" style={{ transform: 'rotate(-90deg)' }}>
-                    <defs>
-                      <linearGradient id="timeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" stopColor={theme.palette.warning.light} />
-                        <stop offset="50%" stopColor={theme.palette.warning.main} />
-                        <stop offset="100%" stopColor={theme.palette.error.main} />
-                      </linearGradient>
-                    </defs>
-                    {/* Background ring */}
+                {/* Radial Progress - made larger */}
+                <Box sx={{ position: 'relative', width: 100, height: 100, flexShrink: 0 }}>
+                  <svg width="100" height="100" style={{ transform: 'rotate(-90deg)' }}>
+                    <circle cx="50" cy="50" r="42" fill="none" stroke={theme.palette.action.hover} strokeWidth="8" />
                     <circle
-                      cx="45"
-                      cy="45"
-                      r="38"
+                      cx="50" cy="50" r="42"
                       fill="none"
-                      stroke={theme.palette.action.hover}
-                      strokeWidth="8"
-                    />
-                    {/* Progress ring */}
-                    <circle
-                      cx="45"
-                      cy="45"
-                      r="38"
-                      fill="none"
-                      stroke="url(#timeGradient)"
+                      stroke={theme.palette.warning.main}
                       strokeWidth="8"
                       strokeLinecap="round"
-                      strokeDasharray={`${(timeData[0]?.value || 0) / 100 * 239} 239`}
-                      style={{
-                        transition: 'stroke-dasharray 1s ease-out',
-                      }}
+                      strokeDasharray={`${(timeData[0]?.value || 0) / 100 * 264} 264`}
+                      style={{ transition: 'stroke-dasharray 1s ease-out' }}
                     />
                   </svg>
-                  {/* Center content */}
-                  <Box sx={{
-                    position: 'absolute',
-                    inset: 0,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}>
-                    <AccessTimeIcon sx={{
-                      fontSize: 28,
-                      color: theme.palette.warning.main,
-                      animation: 'gentlePulse 2s ease-in-out infinite',
-                      '@keyframes gentlePulse': {
-                        '0%, 100%': { transform: 'scale(1)' },
-                        '50%': { transform: 'scale(1.1)' }
-                      }
-                    }} />
+                  <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <AccessTimeIcon sx={{ fontSize: 32, color: theme.palette.warning.main, opacity: 0.8 }} />
                   </Box>
                 </Box>
 
-                {/* Text Content */}
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography variant="h3" fontWeight={800} sx={{
-                    background: `linear-gradient(135deg, ${theme.palette.warning.light} 0%, ${theme.palette.warning.main} 50%, ${theme.palette.error.main} 100%)`,
-                    WebkitBackgroundClip: 'text',
-                    WebkitTextFillColor: 'transparent',
-                    mb: 0.5,
-                    lineHeight: 1,
-                  }}>
+                <Box sx={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                  <Typography variant="h2" fontWeight={800} sx={{ lineHeight: 1, mb: 0.5 }}>
                     {formattedTime}
                   </Typography>
-                  <Typography variant="body2" fontWeight={600} color="text.primary" sx={{ mb: 0.5 }}>
-                    Time Saved
+                  <Typography variant="body1" color="text.secondary" fontWeight={600}>
+                    Saved
                   </Typography>
-                  <Typography variant="caption" color="text.secondary" sx={{
-                    display: 'block',
-                    opacity: 0.7,
-                    fontSize: '0.7rem'
-                  }}>
-                    ~5 sec per file organized
+                  {/* Subtle caption underneath */}
+                  <Typography variant="caption" color="text.secondary" sx={{ opacity: 0.6 }}>
+                    Total Efficiency
                   </Typography>
-
-                  {/* Mini stats row */}
-                  {metrics.filesOrganized > 0 && (
-                    <Box sx={{
-                      display: 'flex',
-                      gap: 1.5,
-                      mt: 1,
-                      pt: 1,
-                      borderTop: '1px solid',
-                      borderColor: 'divider'
-                    }}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                        <Box sx={{
-                          width: 6,
-                          height: 6,
-                          borderRadius: '50%',
-                          bgcolor: theme.palette.warning.main
-                        }} />
-                        <Typography variant="caption" color="text.secondary">
-                          {Math.floor(metrics.timeSavedSeconds / 60)}m {metrics.timeSavedSeconds % 60}s
-                        </Typography>
-                      </Box>
-                    </Box>
-                  )}
                 </Box>
               </Box>
-            </Card>
+            </DashboardCard>
           </Box>
 
-          {/* Bottom 1: Activity Graph */}
-          <Box sx={{ gridArea: 'bot1' }}>
-            <Card elevation={0} sx={{
-              bgcolor: 'background.surfaceContainerLow',
-              borderRadius: '16px',
-              border: '1px solid',
-              borderColor: 'divider',
-              height: '100%',
-              display: 'flex',
-              flexDirection: 'column',
-              p: 3,
-              position: 'relative',
-              overflow: 'hidden'
-            }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <ShowChartIcon color="primary" sx={{ fontSize: 24 }} />
-                  <Typography variant="h6" fontWeight={700}>
-                    Activity Overview
-                  </Typography>
-                </Box>
-                <Box sx={{ display: 'flex', gap: 1 }}>
-                  {/* Legend or filter could go here */}
-                </Box>
-              </Box>
 
-              {activityData.length >= 1 ? (
-                <Box sx={{ flex: 1, width: '100%', minHeight: 0 }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={activityData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                      <defs>
-                        <linearGradient id="colorFilesMain" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor={theme.palette.primary.main} stopOpacity={0.2} />
-                          <stop offset="95%" stopColor={theme.palette.primary.main} stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke={theme.palette.divider} vertical={false} opacity={0.5} />
-                      <XAxis
-                        dataKey="name"
-                        axisLine={false}
-                        tickLine={false}
-                        tick={{ fontSize: 11, fill: theme.palette.text.secondary, fontWeight: 500 }}
-                        interval="preserveStartEnd"
-                        dy={10}
-                      />
-                      <YAxis
-                        axisLine={false}
-                        tickLine={false}
-                        tick={{ fontSize: 11, fill: theme.palette.text.secondary, fontWeight: 500 }}
-                        width={30}
-                      />
-                      <RechartsTooltip
-                        content={<CustomTooltip />}
-                        cursor={{ stroke: theme.palette.primary.main, strokeWidth: 1, strokeDasharray: '4 4' }}
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="files"
-                        stroke={theme.palette.primary.main}
-                        strokeWidth={3}
-                        fill="url(#colorFilesMain)"
-                        dot={false}
-                        activeDot={{ r: 6, fill: theme.palette.background.paper, stroke: theme.palette.primary.main, strokeWidth: 2 }}
-                        animationDuration={1500}
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </Box>
-              ) : (
-                <Box sx={{
-                  flex: 1,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  opacity: 0.5,
-                  gap: 1
-                }}>
-                  <ShowChartIcon sx={{ fontSize: 40, color: 'text.disabled' }} />
-                  <Typography variant="body2" color="text.secondary">
-                    No activity recorded yet
-                  </Typography>
-                </Box>
-              )}
-            </Card>
-          </Box>
 
           {/* Bottom 2: AI Model */}
           <Box sx={{ gridArea: 'bot2' }}>
-            <Card elevation={0} sx={{
-              bgcolor: 'background.surfaceContainerLow',
-              borderRadius: '16px',
-              border: '1px solid',
-              borderColor: 'divider',
-              height: '100%',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              p: 2
-            }}>
-              <MemoryIcon color="action" sx={{ mb: 1, fontSize: 28 }} />
-              <Typography variant="h6" fontWeight={700} sx={{ textAlign: 'center', wordBreak: 'break-word' }}>
-                {aiConfig?.model || 'Unknown'}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">Active Model</Typography>
-            </Card>
+            <DashboardCard
+              title="AI Model"
+              color={theme.palette.info.main}
+              icon={<MemoryIcon />}
+            >
+              <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 1 }}>
+                <Typography variant="h5" fontWeight={700} sx={{ textAlign: 'center', wordBreak: 'break-word' }}>
+                  {aiConfig?.model || 'Unknown'}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">Active Model</Typography>
+              </Box>
+            </DashboardCard>
           </Box>
 
           {/* Bottom 3: Settings */}
+          {/* Bottom 3: Settings */}
           <Box sx={{ gridArea: 'bot3' }}>
-            <Card elevation={0} sx={{
-              bgcolor: 'background.surfaceContainerLow',
-              borderRadius: '16px',
-              border: '1px solid',
-              borderColor: 'divider',
-              height: '100%',
-              position: 'relative',
-              overflow: 'hidden'
-            }}>
-              <CardActionArea
-                onClick={onOpenSettings}
-                sx={{
-                  height: '100%',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  p: 2
-                }}
-              >
-                <SettingsIcon color="action" sx={{ mb: 1, fontSize: 28 }} />
-                <Typography variant="h6" fontWeight={700}>Settings</Typography>
+            <DashboardCard
+              title="Settings"
+              color={theme.palette.action.active}
+              icon={<SettingsIcon />}
+              onClick={onOpenSettings}
+            >
+              <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 0.5 }}>
+
                 <Typography variant="caption" color="text.secondary">Configure App</Typography>
-              </CardActionArea>
-            </Card>
+              </Box>
+            </DashboardCard>
           </Box>
 
           {/* Bottom 4: Recent Activity */}
           <Box sx={{ gridArea: 'bot4' }}>
-            <Card elevation={0} sx={{
-              bgcolor: 'background.surfaceContainerLow',
-              borderRadius: '16px',
-              border: '1px solid',
-              borderColor: 'divider',
-              height: '100%',
-              display: 'flex',
-              flexDirection: 'column',
-              p: 2,
-              overflow: 'hidden'
-            }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
-                <HistoryIcon color="action" sx={{ fontSize: 20 }} />
-                <Typography variant="subtitle2" fontWeight={700}>Recent Activity</Typography>
-              </Box>
+            <DashboardCard
+              title="Recent Activity"
+              color={theme.palette.success.main}
+              icon={<HistoryIcon />}
+              headerAction={
+                <Typography variant="caption" color="text.secondary" fontWeight={500}>Live</Typography>
+              }
+            >
 
               {recentActivity.length > 0 ? (
                 <Box sx={{
                   flex: 1,
                   overflow: 'auto',
                   minHeight: 0,
+                  mt: 1,
                   '&::-webkit-scrollbar': { width: 4 },
-                  '&::-webkit-scrollbar-thumb': {
-                    bgcolor: 'divider',
-                    borderRadius: 2
-                  }
+                  '&::-webkit-scrollbar-thumb': { bgcolor: 'divider', borderRadius: 2 }
                 }}>
                   {recentActivity.slice(0, 8).map((item, index) => (
                     <Box
                       key={index}
                       sx={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 1,
-                        py: 0.5,
-                        px: 0.5,
+                        display: 'flex', alignItems: 'center', gap: 1, py: 0.8, px: 0.5,
                         borderRadius: 1,
                         '&:hover': { bgcolor: 'action.hover' },
                         transition: 'background-color 0.15s ease'
@@ -876,50 +779,24 @@ export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiCo
                       ) : (
                         <InsertDriveFileIcon sx={{ fontSize: 16, color: 'primary.main' }} />
                       )}
-                      <Typography
-                        variant="caption"
-                        sx={{
-                          flex: 1,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                          fontWeight: 500
-                        }}
-                      >
+                      <Typography variant="caption" sx={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}>
                         {item.name}
                       </Typography>
-                      <Typography
-                        variant="caption"
-                        sx={{
-                          bgcolor: 'primary.main',
-                          color: 'primary.contrastText',
-                          px: 0.8,
-                          py: 0.2,
-                          borderRadius: 1,
-                          fontSize: '0.65rem',
-                          fontWeight: 600,
-                          flexShrink: 0
-                        }}
-                      >
+                      <Typography variant="caption" sx={{
+                        bgcolor: 'primary.main', color: 'primary.contrastText', px: 0.8, py: 0.2, borderRadius: 1,
+                        fontSize: '0.65rem', fontWeight: 600, flexShrink: 0
+                      }}>
                         {item.category}
                       </Typography>
                     </Box>
                   ))}
                 </Box>
               ) : (
-                <Box sx={{
-                  flex: 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  opacity: 0.5
-                }}>
-                  <Typography variant="caption" color="text.secondary">
-                    No activity yet
-                  </Typography>
+                <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.5 }}>
+                  <Typography variant="caption" color="text.secondary">No activity yet</Typography>
                 </Box>
               )}
-            </Card>
+            </DashboardCard>
           </Box>
 
         </Box>
@@ -928,26 +805,33 @@ export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiCo
   );
 }
 
-function StatsCard({ title, value, icon, color, trend, trendDirection, fullHeight, children, rowLayout }) {
+// --- SUB-COMPONENTS --- //
+
+function DashboardCard({ title, icon, color, children, headerAction, elevation = 0, onClick }) {
+  // Common visual consistency
+  const CardContentWrapper = onClick ? CardActionArea : Box;
+  const wrapperProps = onClick ? { onClick, sx: { height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'stretch' } } : { sx: { height: '100%', display: 'flex', flexDirection: 'column' } };
+
   return (
     <Card
-      elevation={0}
+      elevation={elevation}
       sx={{
         bgcolor: 'background.surfaceContainer',
         border: '1px solid',
         borderColor: 'divider',
-        borderRadius: '24px', // More rounded
+        borderRadius: '24px',
         height: '100%',
-        transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
         display: 'flex',
         flexDirection: 'column',
         position: 'relative',
         overflow: 'hidden',
+        transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
         '&:hover': {
           borderColor: color,
           transform: 'translateY(-4px)',
           boxShadow: `0 12px 30px -10px ${color}30`,
-          '& .icon-box': {
+          cursor: onClick ? 'pointer' : 'default',
+          '& .icon-box-inner': {
             transform: 'scale(1.1)',
             bgcolor: color,
             color: '#fff'
@@ -955,104 +839,60 @@ function StatsCard({ title, value, icon, color, trend, trendDirection, fullHeigh
         }
       }}
     >
-      <Box sx={{
-        p: 2,
-        height: '100%',
-        display: 'flex',
-        flexDirection: rowLayout ? 'row' : 'column',
-        justifyContent: 'space-between',
-        alignItems: rowLayout ? 'center' : 'stretch',
-        gap: rowLayout ? 2 : 0,
-        zIndex: 1
-      }}>
-
-        {/* Header / Icon Area */}
-        <Box sx={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          mb: rowLayout ? 0 : 1,
-          flex: rowLayout ? 1 : 'initial'
-        }}>
-          {!rowLayout && (
-            <Box className="icon-box" sx={{
-              p: 1.2,
-              borderRadius: '14px',
-              bgcolor: `${color}15`,
-              color: color,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              transition: 'all 0.3s ease'
-            }}>
-              {React.cloneElement(icon, { sx: { fontSize: 26 } })}
-            </Box>
-          )}
-
-          {trend && (
-            <Box sx={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 0.5,
-              bgcolor: trendDirection === 'up' ? 'success.light' : trendDirection === 'down' ? 'error.light' : 'grey.200',
-              color: trendDirection === 'up' ? 'success.dark' : trendDirection === 'down' ? 'error.dark' : 'grey.700',
-              px: 1.2,
-              py: 0.5,
-              borderRadius: 20,
-            }}>
-              {trendDirection === 'up' && <TrendingUpIcon sx={{ fontSize: 14 }} />}
-              {trendDirection === 'down' && <TrendingDownIcon sx={{ fontSize: 14 }} />}
-              <Typography variant="caption" sx={{
-                fontWeight: 700,
-                fontSize: '0.75rem'
+      <CardContentWrapper {...wrapperProps}>
+        <Box sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column', zIndex: 1, flex: 1 }}>
+          {/* Unified Header: Icon (Left) + Title --- Action (Right) */}
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+              <Box className="icon-box-inner" sx={{
+                p: 1.2,
+                borderRadius: '16px',
+                bgcolor: `${color}15`,
+                color: color,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                transition: 'all 0.3s ease'
               }}>
-                {trend}
+                {React.cloneElement(icon, { sx: { fontSize: 26 } })}
+              </Box>
+
+              <Typography variant="h6" fontWeight={700} sx={{ lineHeight: 1.2 }}>
+                {title}
               </Typography>
             </Box>
-          )}
-        </Box>
 
-        {/* Value Area */}
-        <Box sx={{ flex: rowLayout ? 2 : 'initial' }}>
-          <Typography variant="h3" fontWeight={800} sx={{
-            mb: 0.25,
-            fontSize: rowLayout ? '1.8rem' : '2.5rem',
-            letterSpacing: '-0.02em'
-          }}>
-            {value}
-          </Typography>
-          <Typography variant="body1" color="text.secondary" fontWeight={600}>
-            {title}
-          </Typography>
-        </Box>
-
-        {/* Custom Chart/Content Area */}
-        {children && (
-          <Box sx={{
-            mt: rowLayout ? 0 : 'auto',
-            flex: rowLayout ? 'initial' : 1,
-            display: 'flex',
-            alignItems: 'flex-end',
-            minHeight: rowLayout ? 0 : 40
-          }}>
-            {children}
+            <Box>
+              {headerAction}
+            </Box>
           </Box>
-        )}
 
-      </Box>
+          {/* Content */}
+          {children}
+        </Box>
 
-      {/* Background Gradient Blob */}
-      <Box sx={{
-        position: 'absolute',
-        top: -40,
-        right: -40,
-        width: 150,
-        height: 150,
-        borderRadius: '50%',
-        background: `radial-gradient(circle, ${color}20 0%, transparent 70%)`,
-        pointerEvents: 'none',
-        zIndex: 0
-      }} />
+        {/* Decorative Blob */}
+        <Box sx={{
+          position: 'absolute', top: -40, right: -40, width: 140, height: 140, borderRadius: '50%',
+          background: `radial-gradient(circle, ${color}15 0%, transparent 70%)`,
+          pointerEvents: 'none', zIndex: 0
+        }} />
+      </CardContentWrapper>
     </Card>
+  );
+}
+
+function TrendBadge({ direction, label }) {
+  return (
+    <Box sx={{
+      display: 'flex', alignItems: 'center', gap: 0.5,
+      bgcolor: direction === 'up' ? 'success.light' : direction === 'down' ? 'error.light' : 'grey.200',
+      color: direction === 'up' ? 'success.dark' : direction === 'down' ? 'error.dark' : 'grey.700',
+      px: 1.5, py: 0.5, borderRadius: 20
+    }}>
+      {direction === 'up' && <TrendingUpIcon sx={{ fontSize: 16 }} />}
+      {direction === 'down' && <TrendingDownIcon sx={{ fontSize: 16 }} />}
+      <Typography variant="caption" fontWeight={700}>
+        {label}
+      </Typography>
+    </Box>
   );
 }

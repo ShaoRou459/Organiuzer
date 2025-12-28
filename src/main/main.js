@@ -188,7 +188,7 @@ ipcMain.handle('folder:scan', async (event, dirPath) => {
       try {
         const stat = await fs.stat(fullPath);
         if (stat.isFile()) {
-          results.push({ name: item, type: 'file' });
+          results.push({ name: item, type: 'file', size: stat.size });
         } else if (stat.isDirectory()) {
           const context = await getFolderContext(fullPath);
           results.push({ name: item, type: 'folder', context });
