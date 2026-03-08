@@ -1,11 +1,15 @@
 {
   "name": "organiuzer",
   "version": "1.0.0",
-  "description": "",
+  "description": "AI-powered desktop folder organizer with review, history, and safe move execution.",
   "main": "src/main/main.js",
   "scripts": {
-    "dev": "concurrently \"vite\" \"wait-on tcp:5173 && electron .\"",
-    "build": "vite build"
+    "dev": "concurrently -k \"vite --strictPort\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "build": "vite build",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder --win nsis",
+    "dist:x64": "npm run build && electron-builder --win nsis --x64",
+    "dist:arm64": "npm run build && electron-builder --win nsis --arm64"
   },
   "keywords": [],
   "author": "",
@@ -15,8 +19,32 @@
     "@vitejs/plugin-react": "^5.1.1",
     "concurrently": "^9.2.1",
     "electron": "^39.2.4",
+    "electron-builder": "^25.1.8",
     "vite": "^7.2.6",
     "wait-on": "^9.0.3"
+  },
+  "build": {
+    "appId": "com.organiuzer.app",
+    "productName": "Organiuzer",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "src/main/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

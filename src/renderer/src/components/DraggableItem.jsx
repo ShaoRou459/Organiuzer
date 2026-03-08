@@ -3,6 +3,7 @@ import { Paper, Typography } from '@mui/material';
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import FolderIcon from '@mui/icons-material/Folder';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
+import { truncateMiddle } from '../utils/truncateMiddle';
 
 // File type colors
 const getFileColor = (filename) => {
@@ -38,6 +39,7 @@ const DraggableItem = memo(function DraggableItem({
 
   const isFolder = item.type === 'folder';
   const fileColor = getFileColor(item.name);
+  const displayName = truncateMiddle(item.name, 20, 9, 8);
 
   return (
     <Paper
@@ -104,7 +106,7 @@ const DraggableItem = memo(function DraggableItem({
           maxWidth: 180,
         }}
       >
-        {item.name}
+        {displayName}
       </Typography>
     </Paper>
   );

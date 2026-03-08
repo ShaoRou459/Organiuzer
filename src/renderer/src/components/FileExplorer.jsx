@@ -8,6 +8,8 @@ import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import CircularProgress from '@mui/material/CircularProgress';
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
+import { truncateMiddle } from '../utils/truncateMiddle';
 
 // File type icon colors
 const getFileColor = (filename) => {
@@ -41,6 +43,7 @@ function FileTreeItem({ item, fullPath, level = 0 }) {
 
   const isFolder = item.type === 'folder';
   const indent = level * 24;
+  const displayName = truncateMiddle(item.name, 28, 12, 11);
 
   const handleToggle = async () => {
     if (!isFolder) return;
@@ -116,10 +119,11 @@ function FileTreeItem({ item, fullPath, level = 0 }) {
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
               fontWeight: isFolder ? 500 : 400,
-              color: isFolder ? 'text.primary' : 'text.secondary',
+              color: item.hidden ? 'text.disabled' : (isFolder ? 'text.primary' : 'text.secondary'),
+              fontStyle: item.hidden ? 'italic' : 'normal',
             }}
           >
-            {item.name}
+            {displayName}
           </Typography>
         </Tooltip>
 
@@ -187,6 +191,8 @@ function FileTreeItem({ item, fullPath, level = 0 }) {
 // Main grid view of root items
 function RootItemCard({ item, fullPath, onClick }) {
   const isFolder = item.type === 'folder';
+  const isHidden = !!item.hidden;
+  const displayName = truncateMiddle(item.name, 24, 10, 9);
 
   return (
     <Box
@@ -196,13 +202,16 @@ function RootItemCard({ item, fullPath, onClick }) {
         borderRadius: 2,
         bgcolor: 'background.paper',
         border: '1px solid',
-        borderColor: 'divider',
+        borderColor: isHidden ? 'divider' : 'divider',
+        borderStyle: isHidden ? 'dashed' : 'solid',
+        opacity: isHidden ? 0.55 : 1,
         cursor: 'pointer',
         transition: 'all 0.2s',
         '&:hover': {
           bgcolor: 'action.hover',
           borderColor: 'primary.main',
           transform: 'translateY(-2px)',
+          opacity: isHidden ? 0.75 : 1,
         },
       }}
     >
@@ -218,9 +227,9 @@ function RootItemCard({ item, fullPath, onClick }) {
               variant="subtitle2"
               fontWeight={500}
               noWrap
-              sx={{ mb: 0.5 }}
+              sx={{ mb: 0.5, fontStyle: isHidden ? 'italic' : 'normal' }}
             >
-              {item.name}
+              {displayName}
             </Typography>
           </Tooltip>
 
@@ -266,7 +275,24 @@ function RootItemCard({ item, fullPath, onClick }) {
             </Box>
           )}
 
-          {!isFolder && (
+          {isHidden && (
+            <Chip
+              size="small"
+              icon={<VisibilityOffIcon sx={{ fontSize: 12 }} />}
+              label="Hidden"
+              sx={{
+                height: 20,
+                fontSize: '0.65rem',
+                mt: 0.5,
+                bgcolor: 'action.disabledBackground',
+                color: 'text.disabled',
+                '& .MuiChip-label': { px: 0.75 },
+                '& .MuiChip-icon': { color: 'text.disabled', ml: 0.5 }
+              }}
+            />
+          )}
+
+          {!isFolder && !isHidden && (
             <Typography variant="caption" color="text.disabled">
               {item.name.split('.').pop()?.toUpperCase() || 'FILE'}
             </Typography>
