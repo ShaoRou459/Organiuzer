@@ -35,6 +35,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('folder:execute:progress', listener);
   },
 
+  // File utilities
+  findDuplicates: (path, recursive) => ipcRenderer.invoke('folder:findDuplicates', path, recursive),
+  deleteFiles: (files) => ipcRenderer.invoke('folder:deleteFiles', files),
+
   // Category folder lists (per directory path)
   getCategoryFolders: (path) => ipcRenderer.invoke('categories:get', path),
   setCategoryFolders: (path, folders) => ipcRenderer.invoke('categories:set', path, folders),

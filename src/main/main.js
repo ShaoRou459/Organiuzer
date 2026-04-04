@@ -268,6 +268,149 @@ ipcMain.handle('folder:scan', async (event, dirPath) => {
   }
 });
 
+ipcMain.handle('folder:findDuplicates', async (event, dirPath, recursive = false) => {
+  const crypto = require('crypto');
+  const sizeMap = new Map();
+  const ignoredDirs = new Set([
+    'node_modules', 'venv', 'env', '.env', '__pycache__',
+    'dist', 'build', 'out', 'target', '.git', '.vscode', '.idea'
+  ]);
+
+  async function scan(currentPath) {
+    try {
+      const items = await fs.readdir(currentPath);
+      for (const item of items) {
+        if (item.startsWith('.') || ignoredDirs.has(item)) continue;
+        const fullPath = path.join(currentPath, item);
+        try {
+          const stat = await fs.stat(fullPath);
+          if (stat.isFile() && stat.size > 0) {
+            const mapKey = `${currentPath}|${stat.size}`;
+            if (!sizeMap.has(mapKey)) {
+              sizeMap.set(mapKey, { size: stat.size, files: [] });
+            }
+            sizeMap.get(mapKey).files.push({ path: fullPath, stat });
+          } else if (stat.isDirectory() && recursive) {
+            await scan(fullPath);
+          }
+        } catch (e) { }
+      }
+    } catch (e) { }
+  }
+  await scan(dirPath);
+
+  const prefixSize = 64 * 1024; // 64KB for chunk hashing
+
+  const getPrefixHash = async (filePath) => {
+    return new Promise((resolve, reject) => {
+      const rs = fs.createReadStream(filePath, { start: 0, end: prefixSize - 1 });
+      const hashObj = crypto.createHash('md5');
+      rs.on('error', reject);
+      rs.on('data', chunk => hashObj.update(chunk));
+      rs.on('end', () => resolve(hashObj.digest('hex')));
+    });
+  };
+
+  const getFullHash = async (filePath) => {
+    return new Promise((resolve, reject) => {
+      const rs = fs.createReadStream(filePath);
+      const hashObj = crypto.createHash('md5');
+      rs.on('error', reject);
+      rs.on('data', chunk => hashObj.update(chunk));
+      rs.on('end', () => resolve(hashObj.digest('hex')));
+    });
+  };
+
+  const duplicates = [];
+
+  for (const [mapKey, { size, files }] of sizeMap.entries()) {
+    if (files.length > 1) {
+      // Phase 1: Fingerprint the first 64KB
+      const prefixMap = new Map();
+      for (const file of files) {
+        try {
+          const pHash = size <= prefixSize ? await getFullHash(file.path) : await getPrefixHash(file.path);
+          if (!prefixMap.has(pHash)) prefixMap.set(pHash, []);
+          prefixMap.get(pHash).push(file);
+        } catch (e) { }
+      }
+
+      // Phase 2: Full hash ONLY for files with identical prefixes
+      for (const [pHash, pGroup] of prefixMap.entries()) {
+        if (pGroup.length > 1) {
+          const fullMap = new Map();
+          for (const file of pGroup) {
+            try {
+              // If it was smaller than 64KB, we already fully hashed it
+              const fHash = size <= prefixSize ? pHash : await getFullHash(file.path);
+              if (!fullMap.has(fHash)) fullMap.set(fHash, []);
+              fullMap.get(fHash).push(file);
+            } catch (e) { }
+          }
+
+          for (const [fHash, group] of fullMap.entries()) {
+            if (group.length > 1) {
+              // Heuristic sorting to find the true original:
+              group.sort((a, b) => {
+                const aName = path.basename(a.path);
+                const bName = path.basename(b.path);
+
+                // 1. Penalize obvious copies
+                const copyRegex = /copy|\(\d+\)|_\d+\./i;
+                const aIsCopy = copyRegex.test(aName);
+                const bIsCopy = copyRegex.test(bName);
+                if (aIsCopy && !bIsCopy) return 1;
+                if (!aIsCopy && bIsCopy) return -1;
+
+                // 2. Prefer shorter file names
+                if (aName.length !== bName.length) {
+                  return aName.length - bName.length;
+                }
+
+                // 3. Prefer shorter folder paths (closer to root or simpler path)
+                if (a.path.length !== b.path.length) {
+                  return a.path.length - b.path.length;
+                }
+
+                // 4. Prefer older files
+                return a.stat.birthtimeMs - b.stat.birthtimeMs;
+              });
+
+              duplicates.push({
+                hash: fHash,
+                size,
+                files: group.map(g => g.path)
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+  return duplicates;
+});
+
+ipcMain.handle('folder:deleteFiles', async (event, filesToDelete) => {
+  const { shell } = require('electron');
+  const results = { success: 0, failed: 0, errors: [] };
+  for (const file of filesToDelete) {
+    try {
+      await shell.trashItem(file);
+      results.success++;
+    } catch (e) {
+      try {
+        // Fallback to unlink if trash fails
+        await fs.unlink(file);
+        results.success++;
+      } catch (e2) {
+        results.failed++;
+        results.errors.push(e2.message);
+      }
+    }
+  }
+  return results;
+});
+
 ipcMain.handle('folder:analyze', async (event, dirPath, files, context = {}) => {
   const settings = store.store;
   // Retrieve history (simplified for now)
@@ -587,66 +730,67 @@ ipcMain.handle('folder:execute', async (event, dirPath, plan) => {
   setCategoryFoldersForPath(dirPath, [...protectedCategories]);
 
   // --- Metrics Updates ---
-  const currentMetrics = store.get('metrics', {
-    totalFiles: 0,
-    totalBytes: 0,
-    totalTimeSaved: 0,
-    history: []
-  });
+  // --- Metrics Updates ---
+  // Run this asynchronously so we don't block the UI from completing
+  // the execution step when dealing with massive folders like node_modules.
+  Promise.resolve().then(async () => {
+    const currentMetrics = store.get('metrics', {
+      totalFiles: 0,
+      totalBytes: 0,
+      totalTimeSaved: 0,
+      history: []
+    });
 
-  let validMovesCount = 0;
-  let bytesMoved = 0;
+    let validMovesCount = 0;
+    let bytesMoved = 0;
 
-  // Helper function to get size of file or directory recursively
-  async function getItemSize(itemPath) {
-    try {
-      const stat = await fs.stat(itemPath);
-      if (stat.isFile()) {
-        return stat.size;
-      } else if (stat.isDirectory()) {
-        // Recursively calculate directory size
-        let totalSize = 0;
-        const items = await fs.readdir(itemPath);
-        for (const item of items) {
-          totalSize += await getItemSize(path.join(itemPath, item));
+    // Helper function to get size of file or directory recursively
+    async function getItemSize(itemPath, maxDepth = 5) {
+      if (maxDepth <= 0) return 0; // Safeguard against massive recursive loops
+      try {
+        const stat = await fs.stat(itemPath);
+        if (stat.isFile()) {
+          return stat.size;
+        } else if (stat.isDirectory()) {
+          let totalSize = 0;
+          const items = await fs.readdir(itemPath);
+          const tasks = items.map(item => getItemSize(path.join(itemPath, item), maxDepth - 1));
+          const sizes = await Promise.all(tasks);
+          for (const s of sizes) totalSize += s;
+          return totalSize;
         }
-        return totalSize;
+      } catch {
+        return 0;
       }
-    } catch {
       return 0;
     }
-    return 0;
-  }
 
-  for (const item of newHistoryItems) {
-    validMovesCount++;
-    const destPath = path.join(dirPath, item.category, item.name);
-    bytesMoved += await getItemSize(destPath);
-  }
+    for (const item of newHistoryItems) {
+      validMovesCount++;
+      const destPath = path.join(dirPath, item.category, item.name);
+      bytesMoved += await getItemSize(destPath);
+    }
 
-  // Update totals
-  currentMetrics.totalFiles += validMovesCount;
-  currentMetrics.totalBytes += bytesMoved;
-  // Heuristic: 5 seconds saved per file
-  currentMetrics.totalTimeSaved += (validMovesCount * 5);
+    // Update totals
+    currentMetrics.totalFiles += validMovesCount;
+    currentMetrics.totalBytes += bytesMoved;
+    // Heuristic: 5 seconds saved per file
+    currentMetrics.totalTimeSaved += (validMovesCount * 5);
 
-  // Update history (each operation is a separate point for graphing)
-  // This allows the graph to show progress even within a single day
-  currentMetrics.history.push({
-    timestamp: Date.now(),
-    files: validMovesCount,
-    bytes: bytesMoved,
-    // Store cumulative totals for easier graphing
-    totalFiles: currentMetrics.totalFiles,
-    totalBytes: currentMetrics.totalBytes
-  });
+    currentMetrics.history.push({
+      timestamp: Date.now(),
+      files: validMovesCount,
+      bytes: bytesMoved,
+      totalFiles: currentMetrics.totalFiles,
+      totalBytes: currentMetrics.totalBytes
+    });
 
-  // Keep last 50 operations for the graph
-  if (currentMetrics.history.length > 50) {
-    currentMetrics.history.shift();
-  }
+    if (currentMetrics.history.length > 50) {
+      currentMetrics.history.shift();
+    }
 
-  store.set('metrics', currentMetrics);
+    store.set('metrics', currentMetrics);
+  }).catch(err => console.error('Background metrics processing failed:', err));
 
   const runRecord = {
     id: `run_${runTimestamp}_${Math.random().toString(36).slice(2, 8)}`,

@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   Box, Typography, Button, CircularProgress,
   Paper, Alert, Snackbar, IconButton, Drawer, Divider,
   List, ListItem, ListItemIcon, Chip, Tooltip,
   LinearProgress, Grid, Card, CardActionArea, Fade, useTheme,
-  Dialog, DialogTitle, DialogContent, DialogActions
+  Dialog, DialogTitle, DialogContent, DialogActions, Menu, MenuItem, Checkbox, FormControlLabel, ListItemText
 } from '@mui/material';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -17,6 +18,9 @@ import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import TipsAndUpdatesIcon from '@mui/icons-material/TipsAndUpdates';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import SettingsIcon from '@mui/icons-material/Settings';
+import MoreVertIcon from '@mui/icons-material/MoreVert';
+import DeleteIcon from '@mui/icons-material/Delete';
+import ArrowForwardIosIcon from '@mui/icons-material/ArrowForwardIos';
 import DnDOrganizer from './DnDOrganizer';
 import FileExplorer from './FileExplorer';
 import { truncateMiddle } from '../utils/truncateMiddle';
@@ -38,6 +42,98 @@ export default function FolderManager({ path, onBack, onOpenSettings }) {
   const [executeProgress, setExecuteProgress] = useState({ total: 0, processed: 0, moved: 0, current: null });
   const [categoryFolders, setCategoryFolders] = useState([]);
   const [planIssue, setPlanIssue] = useState({ open: false, title: '', message: '', details: [], retryContext: null });
+
+  // Dedupe state
+  const [isToolsExpanded, setIsToolsExpanded] = useState(false);
+  const [dedupeRecursive, setDedupeRecursive] = useState(false);
+  const [dedupeBeforeOrganize, setDedupeBeforeOrganize] = useState(false);
+  const [autoOrganizeAfterDedupe, setAutoOrganizeAfterDedupe] = useState(false);
+
+  const [isDeduping, setIsDeduping] = useState(false);
+  const [duplicates, setDuplicates] = useState([]);
+  const [checkedDuplicates, setCheckedDuplicates] = useState({});
+
+  const handleDedupeScan = async (willAutoOrganize = false) => {
+    setStatus('deduping');
+    setIsDeduping(true);
+    setAutoOrganizeAfterDedupe(willAutoOrganize);
+    try {
+      const dups = await window.electronAPI.findDuplicates(path, dedupeRecursive);
+      setDuplicates(dups || []);
+      // auto-check everything except the first of each group
+      const newChecked = {};
+      (dups || []).forEach((group, gIdx) => {
+        group.files.forEach((file, fIdx) => {
+          if (fIdx > 0) newChecked[`${gIdx}-${fIdx}`] = file;
+        });
+      });
+      setCheckedDuplicates(newChecked);
+
+      if ((!dups || dups.length === 0) && willAutoOrganize) {
+        // Proceed to organize shortly if there are no duplicates
+        setTimeout(() => {
+          handleAnalyze();
+        }, 1500);
+      }
+    } catch (e) {
+      setNotification({ open: true, message: 'Failed to scan duplicates.', severity: 'error' });
+      if (!willAutoOrganize) {
+        setStatus('idle');
+      }
+    } finally {
+      setIsDeduping(false);
+    }
+  };
+
+  const handleDeleteDuplicates = async () => {
+    const filesToDelete = Object.values(checkedDuplicates);
+    if (!filesToDelete.length) {
+      if (autoOrganizeAfterDedupe) {
+        handleAnalyze();
+      } else {
+        setStatus('idle');
+      }
+      return;
+    }
+    setIsDeduping(true);
+    try {
+      const result = await window.electronAPI.deleteFiles(filesToDelete);
+      setNotification({ open: true, message: `Deleted ${result.success} duplicates successfully.`, severity: 'success' });
+      await scanFolder(); // refresh
+      if (autoOrganizeAfterDedupe) {
+        handleAnalyze(); // auto proceed to sorting process!
+      } else {
+        setStatus('idle');
+      }
+    } catch (e) {
+      setNotification({ open: true, message: 'Errors occurred while deleting duplicates.', severity: 'warning' });
+    } finally {
+      setIsDeduping(false);
+    }
+  };
+
+  const handleDedupeCancel = () => {
+    setStatus('idle');
+    setAutoOrganizeAfterDedupe(false); // cancel sorting process if user backed out
+  };
+
+  const handlePrimaryOrganize = () => {
+    if (dedupeBeforeOrganize) {
+      handleDedupeScan(true);
+    } else {
+      handleAnalyze();
+    }
+  };
+
+  const handleToggleDuplicate = (gIdx, fIdx, file) => {
+    const key = `${gIdx}-${fIdx}`;
+    setCheckedDuplicates(prev => {
+      const next = { ...prev };
+      if (next[key]) delete next[key];
+      else next[key] = file;
+      return next;
+    });
+  };
 
   const handleCopyPath = async () => {
     try {
@@ -739,10 +835,134 @@ export default function FolderManager({ path, onBack, onOpenSettings }) {
                   </Box>
                 </DashboardCard>
 
-                <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 2, alignItems: 'center' }}>
+                  <AnimatePresence mode="wait">
+                    {!isToolsExpanded ? (
+                      <motion.div
+                        key="tools-btn"
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.95 }}
+                        transition={{ duration: 0.2 }}
+                      >
+                        <Button
+                          variant="outlined"
+                          onClick={() => setIsToolsExpanded(true)}
+                          disabled={files.length === 0}
+                          startIcon={<TipsAndUpdatesIcon />}
+                          sx={{
+                            fontSize: '1.1rem',
+                            py: 1.5,
+                            px: 3,
+                            borderRadius: 4,
+                            textTransform: 'none',
+                            fontWeight: 700,
+                            borderColor: 'divider',
+                            color: 'text.primary',
+                            '&:hover': {
+                              borderColor: theme.palette.primary.main,
+                              bgcolor: 'action.hover',
+                              transform: 'translateY(-2px)'
+                            },
+                            transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                            height: 52
+                          }}
+                        >
+                          Tools
+                        </Button>
+                      </motion.div>
+                    ) : (
+                      <motion.div
+                        key="tools-expanded"
+                        initial={{ opacity: 0, width: 90 }}
+                        animate={{ opacity: 1, width: 'auto' }}
+                        exit={{ opacity: 0, width: 90 }}
+                        transition={{ duration: 0.3, ease: 'easeOut' }}
+                        style={{ overflow: 'hidden' }}
+                      >
+                        <Box sx={{
+                          display: 'flex', gap: 1, alignItems: 'center', bgcolor: 'background.surfaceContainerHigh',
+                          px: 1, borderRadius: 4, border: '1px solid', borderColor: 'divider', height: 52,
+                          boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
+                        }}>
+                          <Box
+                            onMouseEnter={(e) => e.currentTarget.setAttribute('data-hover', 'true')}
+                            onMouseLeave={(e) => e.currentTarget.removeAttribute('data-hover')}
+                            sx={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              height: 40,
+                              borderRadius: 3,
+                              bgcolor: dedupeBeforeOrganize ? 'primary.main' : 'transparent',
+                              color: dedupeBeforeOrganize ? 'primary.contrastText' : 'text.primary',
+                              transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                              overflow: 'hidden',
+                              '&:hover': {
+                                bgcolor: dedupeBeforeOrganize ? 'primary.main' : 'action.hover',
+                              },
+                              '&[data-hover="true"] .subfolder-options': {
+                                maxWidth: 160,
+                                opacity: 1,
+                                pr: 1.5,
+                              }
+                            }}
+                          >
+                            <Button
+                              color="inherit"
+                              onClick={() => setDedupeBeforeOrganize(!dedupeBeforeOrganize)}
+                              startIcon={<AutoAwesomeIcon sx={{ color: dedupeBeforeOrganize ? 'inherit' : 'primary.main', mb: '2px' }} />}
+                              sx={{ height: '100%', px: 2, borderRadius: 3, textTransform: 'none', fontWeight: dedupeBeforeOrganize ? 700 : 600 }}
+                            >
+                              Dedupe
+                            </Button>
+
+                            <Box
+                              className="subfolder-options"
+                              sx={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                maxWidth: 0,
+                                opacity: 0,
+                                pr: 0,
+                                transition: 'all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                                overflow: 'hidden',
+                                whiteSpace: 'nowrap'
+                              }}
+                            >
+                              <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 1, borderColor: dedupeBeforeOrganize ? 'primary.contrastText' : 'divider', opacity: 0.5 }} />
+                              <FormControlLabel
+                                control={
+                                  <Checkbox
+                                    checked={dedupeRecursive}
+                                    onChange={(e) => setDedupeRecursive(e.target.checked)}
+                                    size="small"
+                                    sx={{
+                                      color: dedupeBeforeOrganize ? 'primary.contrastText' : 'text.secondary',
+                                      '&.Mui-checked': { color: dedupeBeforeOrganize ? 'primary.contrastText' : 'primary.main' },
+                                      py: 0.5
+                                    }}
+                                  />
+                                }
+                                label={<Typography variant="caption" sx={{ userSelect: 'none' }}>+ Subfolders</Typography>}
+                                sx={{ m: 0, ml: 0.5 }}
+                              />
+                            </Box>
+                          </Box>
+
+                          <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 1.5 }} />
+                          <Tooltip title="Close Tools Options">
+                            <IconButton onClick={() => setIsToolsExpanded(false)} size="small" sx={{ mr: 0.5, '&:hover': { color: 'error.main', bgcolor: 'error.main' + '15' } }}>
+                              <CloseIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        </Box>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
                   <Button
                     variant="contained"
-                    onClick={handleAnalyze}
+                    onClick={handlePrimaryOrganize}
                     disabled={files.length === 0}
                     startIcon={<AutoAwesomeIcon />}
                     sx={{
@@ -750,6 +970,7 @@ export default function FolderManager({ path, onBack, onOpenSettings }) {
                       py: 1.5,
                       px: 4,
                       borderRadius: 4,
+                      height: 52,
                       textTransform: 'none',
                       fontWeight: 700,
                       boxShadow: `0 8px 25px ${theme.palette.primary.main}50`,
@@ -763,6 +984,110 @@ export default function FolderManager({ path, onBack, onOpenSettings }) {
                     Organize with AI
                   </Button>
                 </Box>
+              </Box>
+            </Fade>
+          )}
+
+          {/* Deduping State */}
+          {status === 'deduping' && (
+            <Fade in={true} timeout={500}>
+              <Box sx={{ flex: 1, display: 'grid', gridTemplateRows: 'auto 1fr auto', overflow: 'hidden' }}>
+                <DashboardCard
+                  title={
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                      <Chip label="Step 1" color="primary" size="small" sx={{ fontWeight: 800, height: 26, fontSize: '0.75rem', borderRadius: 2 }} />
+                      <Typography variant="h6" fontWeight={700}>Validate Duplicates</Typography>
+                    </Box>
+                  }
+                  icon={<AutoAwesomeIcon />}
+                  color={theme.palette.primary.main}
+                  sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}
+                  headerAction={
+                    <Box sx={{ display: 'flex', gap: 1 }}>
+                      <Button onClick={handleDedupeCancel} color="inherit" disabled={isDeduping}>
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={handleDeleteDuplicates}
+                        disabled={(Object.keys(checkedDuplicates).length === 0 && !autoOrganizeAfterDedupe) || isDeduping}
+                        variant="contained"
+                        color={Object.keys(checkedDuplicates).length === 0 && autoOrganizeAfterDedupe ? "primary" : "error"}
+                        startIcon={Object.keys(checkedDuplicates).length === 0 && autoOrganizeAfterDedupe ? undefined : <DeleteIcon />}
+                        sx={{ borderRadius: 4, px: 3, fontWeight: 700 }}
+                      >
+                        {isDeduping
+                          ? 'Processing...'
+                          : Object.keys(checkedDuplicates).length === 0 && autoOrganizeAfterDedupe
+                            ? 'Skip & Organize'
+                            : `Remove ${Object.keys(checkedDuplicates).length} Duplicates`
+                        }
+                      </Button>
+                    </Box>
+                  }
+                >
+                  <Box sx={{ flex: 1, overflow: 'auto', mt: 1, pr: 1 }}>
+                    {isDeduping && !duplicates.length ? (
+                      <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', p: 4, gap: 3 }}>
+                        <CircularProgress size={50} thickness={4} />
+                        <Typography variant="h6" color="text.secondary">Scanning for duplicates...</Typography>
+                      </Box>
+                    ) : duplicates.length === 0 ? (
+                      <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', p: 4, gap: 2 }}>
+                        <Box sx={{ width: 80, height: 80, borderRadius: '50%', bgcolor: 'success.main' + '15', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <CheckCircleIcon sx={{ fontSize: 40, color: 'success.main' }} />
+                        </Box>
+                        <Box textAlign="center">
+                          <Typography variant="h5" fontWeight={700}>No duplicates found</Typography>
+                          <Typography variant="body1" color="text.secondary" sx={{ mt: 1 }}>Your folder is clean.</Typography>
+                        </Box>
+                      </Box>
+                    ) : (
+                      <List disablePadding sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        {duplicates.map((group, gIdx) => (
+                          <Paper key={gIdx} elevation={0} sx={{
+                            border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden',
+                            bgcolor: 'background.paper'
+                          }}>
+                            <Box sx={{ px: 2, py: 1.5, bgcolor: 'background.surfaceContainer', borderBottom: '1px solid', borderColor: 'divider' }}>
+                              <Typography variant="body2" color="text.primary" fontWeight={700}>
+                                Group {gIdx + 1} • {formatBytes(group.size)}
+                              </Typography>
+                            </Box>
+                            {group.files.map((file, fIdx) => {
+                              const isChecked = !!checkedDuplicates[`${gIdx}-${fIdx}`];
+                              return (
+                                <ListItem key={fIdx} sx={{ px: 2, py: 1.5, borderBottom: fIdx < group.files.length - 1 ? '1px solid' : 'none', borderColor: 'divider' }} disablePadding>
+                                  <FormControlLabel
+                                    sx={{ width: '100%', m: 0 }}
+                                    control={
+                                      <Checkbox
+                                        checked={isChecked}
+                                        onChange={() => handleToggleDuplicate(gIdx, fIdx, file)}
+                                        color="error"
+                                        sx={{ p: 1, mr: 1, '&.Mui-checked': { color: 'error.main' } }}
+                                      />
+                                    }
+                                    label={
+                                      <Box sx={{ display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
+                                        <Typography variant="body1" fontWeight={isChecked ? 400 : 600} noWrap sx={{ textDecoration: isChecked ? 'line-through' : 'none', color: isChecked ? 'text.secondary' : 'text.primary' }}>
+                                          {file.split(/[/\\]/).pop()}
+                                        </Typography>
+                                        <Typography variant="caption" color="text.secondary" noWrap sx={{ opacity: 0.7 }}>
+                                          {file}
+                                        </Typography>
+                                      </Box>
+                                    }
+                                  />
+                                  {fIdx === 0 && <Chip label="Original" size="small" color="primary" sx={{ ml: 1, height: 22, fontSize: '0.7rem', fontWeight: 600 }} />}
+                                </ListItem>
+                              );
+                            })}
+                          </Paper>
+                        ))}
+                      </List>
+                    )}
+                  </Box>
+                </DashboardCard>
               </Box>
             </Fade>
           )}
@@ -809,6 +1134,9 @@ export default function FolderManager({ path, onBack, onOpenSettings }) {
                       </Box>
                     </Box>
                     <Box sx={{ textAlign: 'center', width: '100%', maxWidth: 460, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                      <Box sx={{ mb: 1 }}>
+                        <Chip label={autoOrganizeAfterDedupe ? "Step 2" : "Analysis"} color="secondary" size="small" sx={{ fontWeight: 800, height: 26, fontSize: '0.75rem', borderRadius: 2, mb: 2 }} />
+                      </Box>
                       <Typography variant="h4" fontWeight={800} gutterBottom>Analyzing Files</Typography>
                       <Typography variant="body1" color="text.secondary" paragraph sx={{ fontSize: '1.1rem' }}>
                         AI is determining the optimal structure based on file types, names, and content.
@@ -1428,6 +1756,7 @@ export default function FolderManager({ path, onBack, onOpenSettings }) {
               {notification.message}
             </Alert>
           </Snackbar>
+
         </Box>
       </Box>
     </Fade>
