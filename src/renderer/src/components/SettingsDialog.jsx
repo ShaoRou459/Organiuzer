@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
   Button, TextField, Typography, Box, Switch,
-  FormControlLabel, MenuItem, Divider, Tabs, Tab
+  FormControlLabel, MenuItem, Divider, Tabs, Tab, Link, Chip
 } from '@mui/material';
+import packageJson from '../../../../package.json';
 
 function TabPanel(props) {
   const { children, value, index, ...other } = props;
@@ -34,12 +35,35 @@ export default function SettingsDialog({ open, onClose, onThemeChange }) {
     debugMode: false,
     themeMode: 'dark'
   });
+  const [latestVersion, setLatestVersion] = useState(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
 
   useEffect(() => {
     if (open) {
       loadSettings();
     }
   }, [open]);
+
+  useEffect(() => {
+    if (open && tabIndex === 2 && !latestVersion) {
+      setCheckingUpdate(true);
+      fetch('https://api.github.com/repos/ShaoRou459/Organiuzer/releases/latest')
+        .then(res => res.json())
+        .then(data => {
+          if (data && data.tag_name) {
+            setLatestVersion(data.tag_name.replace(/^v/, ''));
+          } else {
+            // Either no releases yet, or API rate limit exceeded
+            setLatestVersion('unreleased');
+          }
+        })
+        .catch(err => {
+          console.error("Failed to fetch latest version:", err);
+          setLatestVersion('error');
+        })
+        .finally(() => setCheckingUpdate(false));
+    }
+  }, [open, tabIndex, latestVersion]);
 
   const loadSettings = async () => {
     try {
@@ -80,6 +104,7 @@ export default function SettingsDialog({ open, onClose, onThemeChange }) {
           <Tabs value={tabIndex} onChange={(e, v) => setTabIndex(v)} aria-label="settings tabs">
             <Tab label="AI Configuration" />
             <Tab label="General" />
+            <Tab label="About" />
           </Tabs>
         </Box>
 
@@ -154,6 +179,36 @@ export default function SettingsDialog({ open, onClose, onThemeChange }) {
             />
             <Typography variant="caption" color="text.secondary">
               Enables detailed logging and shows raw AI responses in the console.
+            </Typography>
+          </Box>
+        </TabPanel>
+
+        {/* About Settings */}
+        <TabPanel value={tabIndex} index={2}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center', textAlign: 'center', py: 4 }}>
+            <Typography variant="h5" fontWeight="bold">
+              {packageJson.build?.productName || 'Organiuzer'}
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1 }}>
+              <Typography variant="subtitle1" color="text.secondary">
+                Version {packageJson.version}
+              </Typography>
+              {checkingUpdate && <Chip size="small" label="Checking..." variant="outlined" />}
+              {!checkingUpdate && latestVersion && latestVersion !== 'unreleased' && latestVersion !== 'error' && latestVersion !== packageJson.version && (
+                <Chip size="small" color="primary" label={`Update: v${latestVersion}`} component="a" href="https://github.com/ShaoRou459/Organiuzer/releases/latest" target="_blank" clickable />
+              )}
+              {!checkingUpdate && latestVersion && (latestVersion === packageJson.version || latestVersion === 'unreleased') && (
+                <Chip size="small" color="success" label="Up to date" variant="outlined" />
+              )}
+              {!checkingUpdate && latestVersion === 'error' && (
+                <Chip size="small" color="default" label="Update check failed" variant="outlined" />
+              )}
+            </Box>
+            <Typography variant="body1" sx={{ mt: 2, maxWidth: 400 }}>
+              {packageJson.description}
+            </Typography>
+            <Typography variant="body2" color="text.disabled" sx={{ mt: 4 }}>
+              Created by <Link href="https://github.com/ShaoRou459/Organiuzer" target="_blank" rel="noreferrer" color="inherit" underline="hover">ShaoRou459</Link>
             </Typography>
           </Box>
         </TabPanel>
