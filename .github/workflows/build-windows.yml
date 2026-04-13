@@ -13,6 +13,8 @@ jobs:
   build:
     name: Build Windows (AMD64 & ARM64)
     runs-on: windows-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout Repository

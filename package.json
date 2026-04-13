@@ -1,6 +1,6 @@
 {
   "name": "organiuzer",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "AI-powered desktop folder organizer with review, history, and safe move execution.",
   "main": "src/main/main.js",
   "scripts": {
