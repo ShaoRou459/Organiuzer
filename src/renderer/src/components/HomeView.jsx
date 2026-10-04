@@ -1,636 +1,459 @@
-import React, { useMemo, useState, useRef } from 'react';
-import { Box, Typography, Button, Fade, useTheme, Card, CardActionArea, Container } from '@mui/material';
-import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
-import StorageIcon from '@mui/icons-material/Storage';
-import AccessTimeIcon from '@mui/icons-material/AccessTime';
-import SettingsIcon from '@mui/icons-material/Settings';
+import React, { useMemo, useRef } from 'react';
+import { Box, Typography, ButtonBase, useTheme, Tooltip } from '@mui/material';
+import { motion as m } from 'framer-motion';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
-import MemoryIcon from '@mui/icons-material/Memory';
+import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
+import InsertDriveFileOutlinedIcon from '@mui/icons-material/InsertDriveFileOutlined';
+import StorageOutlinedIcon from '@mui/icons-material/StorageOutlined';
+import ScheduleOutlinedIcon from '@mui/icons-material/ScheduleOutlined';
+import MemoryOutlinedIcon from '@mui/icons-material/MemoryOutlined';
+import DonutLargeOutlinedIcon from '@mui/icons-material/DonutLargeOutlined';
+import FolderOutlinedIcon from '@mui/icons-material/FolderOutlined';
 import HistoryIcon from '@mui/icons-material/History';
-import FolderIcon from '@mui/icons-material/Folder';
-import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
-import DonutLargeIcon from '@mui/icons-material/DonutLarge';
-import { truncateMiddle } from '../utils/truncateMiddle';
-export default function HomeView({ onSelectFolder, onOpenSettings, metrics, aiConfig, recentActivity = [] }) {
-  const theme = useTheme();
+import KeyOutlinedIcon from '@mui/icons-material/KeyOutlined';
+import CreateNewFolderOutlinedIcon from '@mui/icons-material/CreateNewFolderOutlined';
+import SurfaceCard from './common/SurfaceCard';
+import ExpressiveShape from './common/ExpressiveShape';
+import { corner, motion, springs } from '../theme/tokens';
+import { stateLayer, STATE } from '../theme/theme';
+import {
+  formatNumber, splitBytes, formatDuration, greeting, folderNameFromPath, parentPath, formatRelativeTime, normalizeKeyPath,
+} from '../utils/format';
 
-  // Mouse tracking for interactive gradient effects
-  const titleCardRef = useRef(null);
-  const [mousePos, setMousePos] = useState({ x: 50, y: 50 });
-  const [isHovering, setIsHovering] = useState(false);
+export default function HomeView({ onSelectFolder, onOpenFolder, onOpenSettings, metrics, settings, recentActivity = [], recentFolders = [], runs = [] }) {
+  const { palette } = useTheme();
+  const c = palette.m3;
 
-  const handleMouseMove = (e) => {
-    if (!titleCardRef.current) return;
-    const rect = titleCardRef.current.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
-    setMousePos({ x, y });
-  };
-
-  // CATEGORY BREAKDOWN DATA (New Widget)
-  const categoryData = useMemo(() => {
-    // If we have no recent activity, return empty
-    if (!recentActivity || recentActivity.length === 0) return [];
-
-    // Count frequencies
+  const topCategories = useMemo(() => {
     const counts = {};
-    recentActivity.forEach(item => {
-      const cat = item.category || 'Other';
+    recentActivity.forEach((item) => {
+      const cat = item?.category || 'Other';
       counts[cat] = (counts[cat] || 0) + 1;
     });
+    return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 4);
+  }, [recentActivity]);
 
-    const colors = [
-      theme.palette.primary.main,
-      theme.palette.secondary.main,
-      theme.palette.error.main,
-      theme.palette.warning.main,
-      theme.palette.info.main,
-      theme.palette.success.main
-    ];
+  const lastRunByPath = useMemo(() => {
+    const map = new Map();
+    runs.forEach((run) => {
+      const key = normalizeKeyPath(run?.dirPath);
+      if (key && !map.has(key)) map.set(key, run);
+    });
+    return map;
+  }, [runs]);
 
-    return Object.entries(counts).map(([name, value], index) => ({
-      name,
-      value,
-      color: colors[index % colors.length]
-    })).sort((a, b) => b.value - a.value); // Sort max first
-  }, [recentActivity, theme.palette]);
-
-  // Format helpers
-  const formattedBytes = useMemo(() => {
-    if (!metrics.bytesOrganized) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    let size = metrics.bytesOrganized;
-    let i = 0;
-    while (size >= 1024 && i < units.length - 1) {
-      size /= 1024;
-      i++;
-    }
-    return `${size.toFixed(1)} ${units[i]}`;
-  }, [metrics.bytesOrganized]);
-
-  const formattedTime = useMemo(() => {
-    if (!metrics.timeSavedSeconds) return '0m';
-    const mins = Math.floor(metrics.timeSavedSeconds / 60);
-    if (mins < 60) return `${mins}m`;
-    const hrs = (mins / 60).toFixed(1);
-    return `${hrs}h`;
-  }, [metrics.timeSavedSeconds]);
+  const bytes = splitBytes(metrics?.totalBytes);
+  const time = formatDuration(metrics?.totalTimeSaved);
+  const aiReady = settings?.hasApiKey || settings?.provider === 'custom';
 
   return (
-    <Fade in={true} timeout={600}>
-      <Container maxWidth={false} sx={{ height: '100%', display: 'flex', flexDirection: 'column', p: 3, overflowY: 'auto' }}>
-
-        {/* Main Grid Layout - Full Screen Cluster */}
-        <Box sx={{
+    <Box sx={{ height: '100%', overflowY: 'auto', p: 2, pt: 1 }}>
+      <Box
+        sx={{
           display: 'grid',
-          width: '100%',
-          height: '100%',
-          gridTemplateColumns: { xs: '1fr', md: '1fr 0.6fr 0.6fr 1fr' },
-          gridTemplateRows: { xs: 'auto', md: 'minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr)' },
-          gap: 2,
-          // Prevent long content (e.g. very long filenames) from forcing grid columns wider
-          '& > *': { minWidth: 0, minHeight: 0 },
+          minHeight: '100%',
+          gap: 1.5,
+          gridTemplateColumns: { xs: '1fr', md: 'minmax(0, 1fr) minmax(0, 0.62fr) minmax(0, 0.62fr) minmax(0, 1fr)' },
+          gridTemplateRows: { xs: 'auto', md: 'minmax(150px, 1fr) minmax(200px, 1.45fr) minmax(140px, 0.9fr)' },
           gridTemplateAreas: {
-            xs: `
-              "title"
-              "left"
-              "start"
-              "right1"
-              "right2"
-              "bot1"
-              "bot2"
-              "bot3"
-              "bot4"
-            `,
+            xs: '"title" "start" "left" "right1" "right2" "bot2" "bot3" "bot4"',
             md: `
               "left title title right1"
               "left start start right2"
               "bot2 bot2 bot3 bot4"
-            `
-          }
-        }}>
+            `,
+          },
+          '& > *': { minWidth: 0, minHeight: 0 },
+        }}
+      >
+        <HeroCard sx={{ gridArea: 'title' }} />
 
-          {/* Title Card - With interactive gradient mesh and animated orbs */}
-          <Box sx={{ gridArea: 'title' }}>
-            <Card
-              ref={titleCardRef}
-              elevation={0}
-              onMouseMove={handleMouseMove}
-              onMouseEnter={() => setIsHovering(true)}
-              onMouseLeave={() => setIsHovering(false)}
-              sx={{
-                bgcolor: 'background.surfaceContainer',
-                borderRadius: '16px',
-                border: '1px solid',
-                borderColor: isHovering ? 'primary.main' : 'divider',
-                p: 2,
-                height: '100%',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                position: 'relative',
-                overflow: 'hidden',
-                cursor: 'default',
-                transition: 'border-color 0.4s ease',
-              }}>
+        {/* Left column: totals + where things went */}
+        <Box sx={{ gridArea: 'left', display: 'grid', gridTemplateRows: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 1.5 }}>
+          <SurfaceCard icon={<InsertDriveFileOutlinedIcon />} title="Files organized">
+            <BigNumber value={formatNumber(metrics?.totalFiles)} caption={metrics?.totalFiles ? 'across every run' : 'Your first run will count here'} />
+          </SurfaceCard>
 
-              {/* Base mesh gradient layer */}
-              <Box sx={{
-                position: 'absolute',
-                inset: 0,
-                background: `
-                  radial-gradient(ellipse 80% 60% at 20% 30%, rgba(208,188,255,0.15) 0%, transparent 50%),
-                  radial-gradient(ellipse 70% 50% at 80% 70%, rgba(239,184,200,0.12) 0%, transparent 50%),
-                  radial-gradient(ellipse 60% 80% at 50% 50%, rgba(147,112,219,0.08) 0%, transparent 50%)
-                `,
-                opacity: 0.8,
-              }} />
-
-              {/* Mouse-following spotlight gradient */}
-              <Box sx={{
-                position: 'absolute',
-                inset: 0,
-                background: `radial-gradient(600px circle at ${mousePos.x}% ${mousePos.y}%, rgba(208,188,255,${isHovering ? 0.25 : 0.08}) 0%, transparent 40%)`,
-                transition: isHovering ? 'none' : 'background 0.5s ease-out',
-                pointerEvents: 'none',
-              }} />
-
-              {/* Animated floating orb 1 - Large Purple */}
-              <Box sx={{
-                position: 'absolute',
-                top: '-30%',
-                left: '-20%',
-                width: 350,
-                height: 350,
-                borderRadius: '50%',
-                background: 'radial-gradient(circle, rgba(208,188,255,0.6) 0%, rgba(208,188,255,0.2) 40%, transparent 70%)',
-                filter: 'blur(40px)',
-                animation: 'roam1 12s ease-in-out infinite',
-                transform: isHovering
-                  ? `translate(${(mousePos.x - 50) * 0.3}px, ${(mousePos.y - 50) * 0.3}px)`
-                  : 'none',
-                transition: isHovering ? 'transform 0.15s ease-out' : 'transform 0.5s ease-out',
-                '@keyframes roam1': {
-                  '0%': { transform: 'translate(0, 0) scale(1)' },
-                  '25%': { transform: 'translate(180px, 80px) scale(1.3)' },
-                  '50%': { transform: 'translate(320px, 40px) scale(0.85)' },
-                  '75%': { transform: 'translate(120px, 100px) scale(1.15)' },
-                  '100%': { transform: 'translate(0, 0) scale(1)' }
-                }
-              }} />
-
-              {/* Animated floating orb 2 - Large Pink */}
-              <Box sx={{
-                position: 'absolute',
-                bottom: '-25%',
-                right: '-15%',
-                width: 400,
-                height: 400,
-                borderRadius: '50%',
-                background: 'radial-gradient(circle, rgba(239,184,200,0.55) 0%, rgba(239,184,200,0.2) 40%, transparent 70%)',
-                filter: 'blur(50px)',
-                animation: 'roam2 15s ease-in-out infinite',
-                transform: isHovering
-                  ? `translate(${(mousePos.x - 50) * -0.25}px, ${(mousePos.y - 50) * -0.25}px)`
-                  : 'none',
-                transition: isHovering ? 'transform 0.2s ease-out' : 'transform 0.5s ease-out',
-                '@keyframes roam2': {
-                  '0%': { transform: 'translate(0, 0) scale(1)' },
-                  '20%': { transform: 'translate(-220px, -70px) scale(1.2)' },
-                  '40%': { transform: 'translate(-350px, -100px) scale(0.9)' },
-                  '60%': { transform: 'translate(-180px, -130px) scale(1.15)' },
-                  '80%': { transform: 'translate(-80px, -50px) scale(1.05)' },
-                  '100%': { transform: 'translate(0, 0) scale(1)' }
-                }
-              }} />
-
-              {/* Animated floating orb 3 - Center Violet */}
-              <Box sx={{
-                position: 'absolute',
-                top: '40%',
-                left: '45%',
-                marginTop: '-100px',
-                marginLeft: '-100px',
-                width: 200,
-                height: 200,
-                borderRadius: '50%',
-                background: 'radial-gradient(circle, rgba(147,112,219,0.5) 0%, rgba(147,112,219,0.15) 50%, transparent 70%)',
-                filter: 'blur(35px)',
-                animation: 'roam3 10s ease-in-out infinite',
-                transform: isHovering
-                  ? `translate(${(mousePos.x - 50) * 0.5}px, ${(mousePos.y - 50) * 0.5}px) scale(1.2)`
-                  : 'none',
-                transition: isHovering ? 'transform 0.1s ease-out' : 'transform 0.5s ease-out',
-                '@keyframes roam3': {
-                  '0%': { transform: 'translate(0, 0) scale(1)' },
-                  '25%': { transform: 'translate(-150px, -80px) scale(0.75)' },
-                  '50%': { transform: 'translate(120px, -100px) scale(1.3)' },
-                  '75%': { transform: 'translate(160px, 70px) scale(0.85)' },
-                  '100%': { transform: 'translate(0, 0) scale(1)' }
-                }
-              }} />
-
-              {/* Extra accent orb 4 - Small Cyan accent */}
-              <Box sx={{
-                position: 'absolute',
-                top: '20%',
-                right: '10%',
-                width: 150,
-                height: 150,
-                borderRadius: '50%',
-                background: 'radial-gradient(circle, rgba(100,200,255,0.4) 0%, transparent 60%)',
-                filter: 'blur(25px)',
-                animation: 'roam4 8s ease-in-out infinite',
-                opacity: isHovering ? 0.9 : 0.5,
-                transition: 'opacity 0.4s ease',
-                '@keyframes roam4': {
-                  '0%': { transform: 'translate(0, 0) scale(1)' },
-                  '33%': { transform: 'translate(-80px, 60px) scale(1.2)' },
-                  '66%': { transform: 'translate(-40px, -30px) scale(0.9)' },
-                  '100%': { transform: 'translate(0, 0) scale(1)' }
-                }
-              }} />
-
-              {/* Glow ring around cursor on hover */}
-              <Box sx={{
-                position: 'absolute',
-                width: 120,
-                height: 120,
-                borderRadius: '50%',
-                background: 'radial-gradient(circle, rgba(208,188,255,0.3) 0%, transparent 70%)',
-                left: `calc(${mousePos.x}% - 60px)`,
-                top: `calc(${mousePos.y}% - 60px)`,
-                opacity: isHovering ? 1 : 0,
-                transform: `scale(${isHovering ? 1.2 : 0.5})`,
-                transition: 'opacity 0.3s ease, transform 0.3s ease',
-                pointerEvents: 'none',
-                filter: 'blur(10px)',
-              }} />
-
-              {/* Content */}
-              <Box sx={{ position: 'relative', zIndex: 1, textAlign: 'center' }}>
-                {/* Time-based greeting */}
-                <Typography variant="caption" sx={{
-                  color: 'text.secondary',
-                  fontWeight: 500,
-                  letterSpacing: '0.5px',
-                  mb: 0.5,
-                  display: 'block'
-                }}>
-                  {(() => {
-                    const hour = new Date().getHours();
-                    if (hour < 12) return '☀️ Good morning';
-                    if (hour < 17) return '🌤️ Good afternoon';
-                    if (hour < 21) return '🌆 Good evening';
-                    return '🌙 Good night';
-                  })()}
-                </Typography>
-
-                {/* App name with enhanced gradient */}
-                <Typography variant="h3" fontWeight={800} sx={{
-                  background: isHovering
-                    ? 'linear-gradient(135deg, #D0BCFF 0%, #64C8FF 50%, #EFB8C8 100%)'
-                    : 'linear-gradient(90deg, #D0BCFF 0%, #EFB8C8 100%)',
-                  backgroundSize: '200% 200%',
-                  WebkitBackgroundClip: 'text',
-                  WebkitTextFillColor: 'transparent',
-                  mb: 0.5,
-                  transition: 'background 0.5s ease',
-                  animation: isHovering ? 'shimmer 2s ease-in-out infinite' : 'none',
-                  '@keyframes shimmer': {
-                    '0%': { backgroundPosition: '0% 50%' },
-                    '50%': { backgroundPosition: '100% 50%' },
-                    '100%': { backgroundPosition: '0% 50%' }
-                  }
-                }}>
-                  Organiuzer
-                </Typography>
-
-                {/* Tagline */}
-                <Typography variant="body2" sx={{
-                  color: 'text.secondary',
-                  fontWeight: 500,
-                  opacity: 0.8
-                }}>
-                  Declutter • Organize • Automate
-                </Typography>
-              </Box>
-            </Card>
-          </Box>
-
-          {/* Left Column: Split into Merged Analytics (Top) and New Composition (Bottom) */}
-          <Box sx={{ gridArea: 'left', display: 'flex', flexDirection: 'column', gap: 2 }}>
-
-            {/* 1. Merged Analytics Widget (50%) */}
-            <DashboardCard
-              title="Analytics"
-              color={theme.palette.primary.main}
-              icon={<AutoAwesomeIcon />}
-            >
-              <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 1 }}>
-                <Typography variant="h2" fontWeight={850} sx={{ letterSpacing: '-0.03em', lineHeight: 1 }}>
-                  {metrics.filesOrganized?.toLocaleString() || '0'}
-                </Typography>
-                <Typography variant="caption" color="text.secondary" fontWeight={700} sx={{ letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                  Files Organized
-                </Typography>
-              </Box>
-            </DashboardCard>
-
-            {/* 2. New Widget: Composition (50%) */}
-            <DashboardCard
-              title="Composition"
-              color={theme.palette.secondary.main}
-              icon={<DonutLargeIcon />}
-            >
-              <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {categoryData.length > 0 ? (
-                  <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 1 }}>
-                    {categoryData.slice(0, 3).map((cat, i) => (
-                      <Box key={i} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                          <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: cat.color }} />
-                          <Typography variant="body2" fontWeight={650} sx={{ opacity: 0.9 }}>
-                            {cat.name}
-                          </Typography>
-                        </Box>
-                        <Typography variant="body2" fontWeight={750} sx={{ opacity: 0.9 }}>
-                          {cat.value}
-                        </Typography>
-                      </Box>
-                    ))}
-                    <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, opacity: 0.7 }}>
-                      Top categories (recent)
-                    </Typography>
-                  </Box>
-                ) : (
-                  <Typography variant="caption" color="text.secondary">No data yet</Typography>
-                )}
-              </Box>
-            </DashboardCard>
-
-          </Box>
-
-          {/* Center Start Button Area */}
-          <Box sx={{
-            gridArea: 'start',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center',
-            alignItems: 'center',
-            position: 'relative'
-          }}>
-            <Button
-              variant="contained"
-              onClick={onSelectFolder}
-              endIcon={<ArrowForwardIcon />}
-              sx={{
-                width: '100%',
-                height: '100%',
-                minHeight: '120px',
-                borderRadius: '24px',
-                fontSize: '2rem',
-                fontWeight: 700,
-                textTransform: 'none',
-                boxShadow: `0 8px 30px ${theme.palette.primary.main}40`,
-                '&:hover': {
-                  transform: 'scale(1.02)',
-                  boxShadow: `0 12px 40px ${theme.palette.primary.main}60`,
-                },
-                transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
-              }}
-            >
-              Start
-            </Button>
-          </Box>
-
-          {/* Right Top Card (Space) - With Smooth Sparkline */}
-          <Box sx={{ gridArea: 'right1' }}>
-            <DashboardCard
-              title="Space Processed"
-              color={theme.palette.secondary.main}
-              icon={<StorageIcon />}
-            >
-              <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 1 }}>
-                <Typography variant="h4" fontWeight={850} sx={{ letterSpacing: '-0.03em', lineHeight: 1.1 }}>
-                  {formattedBytes}
-                </Typography>
-                <Typography variant="caption" color="text.secondary" fontWeight={700} sx={{ letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                  Space Organized
-                </Typography>
-              </Box>
-            </DashboardCard>
-          </Box>
-
-          {/* Right Bottom Card: Recent Activity (taller slot) */}
-          <Box sx={{ gridArea: 'right2' }}>
-            <DashboardCard
-              title="Recent Activity"
-              color={theme.palette.success.main}
-              icon={<HistoryIcon />}
-            >
-              {recentActivity.length > 0 ? (
-                <Box sx={{
-                  flex: 1,
-                  overflow: 'auto',
-                  minHeight: 0,
-                  mt: 1,
-                  '&::-webkit-scrollbar': { width: 4 },
-                  '&::-webkit-scrollbar-thumb': { bgcolor: 'divider', borderRadius: 2 }
-                }}>
-                  {recentActivity.slice(0, 12).map((item, index) => (
-                    <Box
-                      key={index}
-                      sx={{
-                        display: 'flex', alignItems: 'center', gap: 1, py: 0.8, px: 0.5, minWidth: 0,
-                        borderRadius: 1,
-                        '&:hover': { bgcolor: 'action.hover' },
-                        transition: 'background-color 0.15s ease'
-                      }}
-                    >
-                      {item.type === 'folder' ? (
-                        <FolderIcon sx={{ fontSize: 16, color: 'warning.main' }} />
-                      ) : (
-                        <InsertDriveFileIcon sx={{ fontSize: 16, color: 'primary.main' }} />
-                      )}
-                      <Typography variant="caption" sx={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}>
-                        {truncateMiddle(item.name, 24, 10, 9)}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', fontWeight: 650, flexShrink: 0, opacity: 0.8 }}>
-                        {item.category}
-                      </Typography>
-                    </Box>
-                  ))}
-                </Box>
-              ) : (
-                <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.5 }}>
-                  <Typography variant="caption" color="text.secondary">No activity yet</Typography>
-                </Box>
-              )}
-            </DashboardCard>
-          </Box>
-
-
-
-          {/* Bottom 2: AI Model */}
-          <Box sx={{ gridArea: 'bot2' }}>
-            <DashboardCard
-              title="AI Model"
-              color={theme.palette.info.main}
-              icon={<MemoryIcon />}
-            >
-              <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 0.75 }}>
-                <Typography variant="h5" fontWeight={800} sx={{ wordBreak: 'break-word', lineHeight: 1.15 }}>
-                  {aiConfig?.model || 'Unknown'}
-                </Typography>
-                <Typography variant="caption" color="text.secondary" fontWeight={700} sx={{ letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                  Active Model
-                </Typography>
-              </Box>
-            </DashboardCard>
-          </Box>
-
-          {/* Bottom 3: Settings */}
-          {/* Bottom 3: Settings */}
-          <Box sx={{ gridArea: 'bot3' }}>
-            <DashboardCard
-              title=""
-              color={theme.palette.action.active}
-              icon={<SettingsIcon />}
-              onClick={onOpenSettings}
-              variant="iconOnly"
-            >
-            </DashboardCard>
-          </Box>
-
-          {/* Bottom 4: Time Saved */}
-          <Box sx={{ gridArea: 'bot4' }}>
-            <DashboardCard
-              title="Time Saved"
-              color={theme.palette.warning.main}
-              icon={<AccessTimeIcon />}
-            >
-              <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 1 }}>
-                <Typography variant="h3" fontWeight={850} sx={{ letterSpacing: '-0.03em', lineHeight: 1 }}>
-                  {formattedTime}
-                </Typography>
-                <Typography variant="caption" color="text.secondary" fontWeight={700} sx={{ letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                  Time Saved
-                </Typography>
-              </Box>
-            </DashboardCard>
-          </Box>
-
+          <SurfaceCard icon={<DonutLargeOutlinedIcon />} title="Top categories">
+            {topCategories.length > 0 ? (
+              <CategoryBars data={topCategories} />
+            ) : (
+              <EmptyNote>Categories you use most will appear after a run.</EmptyNote>
+            )}
+          </SurfaceCard>
         </Box>
-      </Container>
-    </Fade>
-  );
-}
 
-// --- SUB-COMPONENTS --- //
+        <StartButton sx={{ gridArea: 'start' }} onClick={onSelectFolder} />
 
-function DashboardCard({ title, icon, color, children, headerAction, elevation = 0, onClick, variant = 'default' }) {
-  // Common visual consistency
-  const CardContentWrapper = onClick ? CardActionArea : Box;
-  const isIconOnly = variant === 'iconOnly';
-  const wrapperProps = onClick
-    ? {
-      onClick,
-      sx: {
-        height: '100%', minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'stretch',
-        ...(isIconOnly && {
-          '& .MuiCardActionArea-focusHighlight': { display: 'none' },
-          '&:hover': { bgcolor: 'transparent' },
-        }),
-      },
-    }
-    : { sx: { height: '100%', minWidth: 0, display: 'flex', flexDirection: 'column' } };
+        <SurfaceCard sx={{ gridArea: 'right1' }} icon={<StorageOutlinedIcon />} title="Space organized">
+          <BigNumber value={bytes.num} unit={bytes.unit} caption="sorted into folders" />
+        </SurfaceCard>
 
-  return (
-    <Card
-      elevation={elevation}
-      sx={{
-        bgcolor: 'background.surfaceContainer',
-        border: '1px solid',
-        borderColor: 'divider',
-        borderRadius: '24px',
-        height: '100%',
-        minWidth: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        position: 'relative',
-        overflow: 'hidden',
-        transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-        '&:hover': {
-          borderColor: color,
-          transform: 'translateY(-4px)',
-          boxShadow: `0 12px 30px -10px ${color}30`,
-          cursor: onClick ? 'pointer' : 'default',
-          '& .icon-box-inner': {
-            transform: 'scale(1.1)',
-            color: color,
-          }
-        }
-      }}
-    >
-      <CardContentWrapper {...wrapperProps}>
-        <Box sx={{ p: 2, height: '100%', minWidth: 0, display: 'flex', flexDirection: 'column', zIndex: 1, flex: 1 }}>
-          {isIconOnly ? (
-            <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Box
-                className="icon-box-inner"
-                sx={{
-
-                  color: color,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  transition: 'all 0.3s ease'
-                }}
-              >
-                {React.cloneElement(icon, { sx: { fontSize: 56 } })}
-              </Box>
+        <SurfaceCard sx={{ gridArea: 'right2' }} icon={<HistoryIcon />} title="Recent folders">
+          {recentFolders.length > 0 ? (
+            <Box component="ul" sx={{ listStyle: 'none', m: 0, mx: -2, mb: -2, mt: -1, p: 0, overflowY: 'auto', flex: 1, minHeight: 0 }}>
+              {recentFolders.slice(0, 6).map((dir) => {
+                const run = lastRunByPath.get(normalizeKeyPath(dir));
+                return (
+                  <li key={dir}>
+                    <RecentFolderRow
+                      name={folderNameFromPath(dir)}
+                      detail={run ? `Organized ${formatRelativeTime(run.timestamp).toLowerCase()}` : parentPath(dir)}
+                      title={dir}
+                      onClick={() => onOpenFolder(dir)}
+                    />
+                  </li>
+                );
+              })}
             </Box>
           ) : (
-            <>
-              {/* Unified Header: Icon (Left) + Title --- Action (Right) */}
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                  <Box className="icon-box-inner" sx={{
-                    p: 1.2,
-                    borderRadius: '16px',
-                    color: color,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    transition: 'all 0.3s ease'
-                  }}>
-                    {React.cloneElement(icon, { sx: { fontSize: 26 } })}
-                  </Box>
-
-                  <Typography variant="h6" fontWeight={700} sx={{ lineHeight: 1.2 }}>
-                    {title}
-                  </Typography>
-                </Box>
-
-                <Box>
-                  {headerAction}
-                </Box>
-              </Box>
-
-              {/* Content */}
-              {children}
-            </>
+            <EmptyNote>Folders you open show up here for one-click access.</EmptyNote>
           )}
-        </Box>
+        </SurfaceCard>
 
-        {/* Decorative Blob */}
-        <Box sx={{
-          position: 'absolute', top: -40, right: -40, width: 140, height: 140, borderRadius: '50%',
-          background: `radial-gradient(circle, ${color}15 0%, transparent 70%)`,
-          pointerEvents: 'none', zIndex: 0
-        }} />
-      </CardContentWrapper>
-    </Card>
+        <AiModelCard sx={{ gridArea: 'bot2' }} settings={settings} ready={aiReady} onClick={(event) => onOpenSettings('ai', event.currentTarget)} />
+
+        <SettingsTile sx={{ gridArea: 'bot3' }} onClick={(event) => onOpenSettings('general', event.currentTarget)} />
+
+        <SurfaceCard sx={{ gridArea: 'bot4' }} icon={<ScheduleOutlinedIcon />} title="Time saved">
+          <BigNumber value={time.num} unit={time.unit} caption="estimated, ~5 s per item" />
+        </SurfaceCard>
+      </Box>
+    </Box>
   );
 }
 
+// ---------------------------------------------------------------------------
+
+function BigNumber({ value, unit, caption }) {
+  const { palette } = useTheme();
+  return (
+    <Box sx={{ mt: 'auto', minWidth: 0 }}>
+      <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75, minWidth: 0 }}>
+        <Typography
+          variant="displayMediumEmphasized"
+          component="p"
+          noWrap
+          sx={{ fontVariantNumeric: 'tabular-nums', fontStretch: '112%', lineHeight: 1, letterSpacing: '-0.02em' }}
+        >
+          {value}
+        </Typography>
+        {unit && <Typography variant="titleLarge" component="span" sx={{ color: palette.m3.onSurfaceVariant }}>{unit}</Typography>}
+      </Box>
+      {caption && (
+        <Typography variant="bodySmall" component="p" sx={{ color: palette.m3.onSurfaceVariant, mt: 1 }} noWrap>
+          {caption}
+        </Typography>
+      )}
+    </Box>
+  );
+}
+
+function EmptyNote({ children }) {
+  const { palette } = useTheme();
+  return (
+    <Typography variant="bodyMedium" sx={{ color: palette.m3.onSurfaceVariant, mt: 'auto', maxWidth: 260 }}>
+      {children}
+    </Typography>
+  );
+}
+
+function CategoryBars({ data }) {
+  const { palette } = useTheme();
+  const c = palette.m3;
+  const max = Math.max(...data.map((d) => d.value), 1);
+  const fills = [c.primary, c.tertiary, c.secondary, c.outline];
+  return (
+    <Box sx={{ mt: 'auto', display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+      {data.map((d, i) => (
+        <Box key={d.name} sx={{ minWidth: 0 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, mb: 0.5 }}>
+            <Typography variant="labelLarge" noWrap sx={{ minWidth: 0 }}>{d.name}</Typography>
+            <Typography variant="labelLarge" sx={{ color: c.onSurfaceVariant, fontVariantNumeric: 'tabular-nums' }}>{d.value}</Typography>
+          </Box>
+          <Box sx={{ height: 8, borderRadius: corner.full, bgcolor: c.surfaceContainerHighest, overflow: 'hidden' }}>
+            <m.div
+              initial={{ width: 0 }}
+              animate={{ width: `${Math.max(6, (d.value / max) * 100)}%` }}
+              transition={{ ...springs.slowSpatial, delay: 0.05 * i }}
+              style={{ height: '100%', borderRadius: 9999, background: fills[i % fills.length] }}
+            />
+          </Box>
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
+function RecentFolderRow({ name, detail, title, onClick }) {
+  const { palette } = useTheme();
+  const c = palette.m3;
+  return (
+    <ButtonBase
+      onClick={onClick}
+      title={title}
+      sx={{
+        width: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1.5,
+        px: 2,
+        py: 1.25,
+        borderRadius: corner.lg,
+        textAlign: 'left',
+        transition: motion.effects(['background-color']),
+        '&:hover': { bgcolor: stateLayer(c.surfaceContainer, c.onSurface, STATE.hover) },
+        '&:hover .recent-go': { opacity: 1, transform: 'translateX(0)' },
+        '&.Mui-focusVisible': { outline: `2px solid ${c.primary}`, outlineOffset: -2 },
+      }}
+    >
+      <Box sx={{ width: 40, height: 40, borderRadius: corner.md, bgcolor: c.secondaryContainer, color: c.onSecondaryContainer, display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+        <FolderOutlinedIcon fontSize="small" />
+      </Box>
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        <Typography variant="titleSmall" component="p" noWrap>{name}</Typography>
+        <Typography variant="bodySmall" component="p" noWrap sx={{ color: c.onSurfaceVariant }}>{detail}</Typography>
+      </Box>
+      <ArrowForwardIcon
+        className="recent-go"
+        fontSize="small"
+        sx={{ color: c.onSurfaceVariant, opacity: 0, transform: 'translateX(-4px)', transition: [motion.effects(['opacity']), motion.spatial(['transform'], 'fast')].join(', ') }}
+      />
+    </ButtonBase>
+  );
+}
+
+/**
+ * Hero moment #1. The original orb mesh, now driven by scheme colours and CSS variables
+ * (pointer tracking writes custom properties instead of re-rendering React on every move).
+ */
+function HeroCard({ sx }) {
+  const { palette } = useTheme();
+  const c = palette.m3;
+  const ref = useRef(null);
+
+  const onMove = (e) => {
+    const el = ref.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    el.style.setProperty('--mx', `${((e.clientX - r.left) / r.width) * 100}%`);
+    el.style.setProperty('--my', `${((e.clientY - r.top) / r.height) * 100}%`);
+    el.style.setProperty('--dx', `${((e.clientX - r.left) / r.width - 0.5) * 2}`);
+    el.style.setProperty('--dy', `${((e.clientY - r.top) / r.height - 0.5) * 2}`);
+  };
+
+  const orb = (color, size, blur, anim, extra) => ({
+    position: 'absolute',
+    width: size,
+    height: size,
+    borderRadius: '50%',
+    background: `radial-gradient(circle, color-mix(in srgb, ${color} 70%, transparent) 0%, color-mix(in srgb, ${color} 22%, transparent) 45%, transparent 70%)`,
+    filter: `blur(${blur}px)`,
+    animation: `${anim} ease-in-out infinite`,
+    willChange: 'transform',
+    pointerEvents: 'none',
+    ...extra,
+  });
+
+  return (
+    <Box
+      ref={ref}
+      onPointerMove={onMove}
+      sx={{
+        ...sx,
+        '--mx': '50%',
+        '--my': '50%',
+        '--dx': 0,
+        '--dy': 0,
+        position: 'relative',
+        overflow: 'hidden',
+        borderRadius: corner.xlInc,
+        bgcolor: c.surfaceContainerLow,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        isolation: 'isolate',
+        '&:hover .hero-spot': { opacity: 1 },
+        '@keyframes roam1': {
+          '0%, 100%': { transform: 'translate(0, 0) scale(1)' },
+          '33%': { transform: 'translate(160px, 60px) scale(1.25)' },
+          '66%': { transform: 'translate(300px, 20px) scale(0.9)' },
+        },
+        '@keyframes roam2': {
+          '0%, 100%': { transform: 'translate(0, 0) scale(1)' },
+          '30%': { transform: 'translate(-220px, -60px) scale(1.15)' },
+          '60%': { transform: 'translate(-340px, -110px) scale(0.92)' },
+        },
+        '@keyframes roam3': {
+          '0%, 100%': { transform: 'translate(0, 0) scale(1)' },
+          '25%': { transform: 'translate(-140px, -60px) scale(0.8)' },
+          '50%': { transform: 'translate(120px, -80px) scale(1.25)' },
+          '75%': { transform: 'translate(150px, 60px) scale(0.9)' },
+        },
+      }}
+    >
+      {/* Orbs (parallax with the pointer via --dx/--dy) */}
+      <Box sx={{ position: 'absolute', inset: 0, zIndex: -1, transform: 'translate(calc(var(--dx) * 14px), calc(var(--dy) * 10px))', transition: motion.spatial(['transform'], 'slow') }}>
+        {/* Light mode uses the fixed-dim tones; dark accent roles turn muddy on a light surface. */}
+        <Box sx={orb(palette.mode === 'light' ? c.primaryFixedDim : c.primary, 340, 44, 'roam1 14s', { top: '-45%', left: '-12%' })} />
+        <Box sx={orb(palette.mode === 'light' ? c.tertiaryFixedDim : c.tertiary, 380, 54, 'roam2 17s', { bottom: '-55%', right: '-10%' })} />
+        <Box sx={orb(palette.mode === 'light' ? c.primaryFixed : c.secondary, 200, 36, 'roam3 11s', { top: '25%', left: '42%' })} />
+      </Box>
+      {/* Pointer spotlight */}
+      <Box
+        className="hero-spot"
+        sx={{
+          position: 'absolute',
+          inset: 0,
+          zIndex: -1,
+          opacity: 0,
+          background: `radial-gradient(420px circle at var(--mx) var(--my), color-mix(in srgb, ${c.primary} 22%, transparent), transparent 45%)`,
+          transition: motion.effects(['opacity'], 'slow'),
+          pointerEvents: 'none',
+        }}
+      />
+
+      <Box sx={{ textAlign: 'center', px: 3, py: 2 }}>
+        <Typography variant="labelLarge" component="p" sx={{ color: c.onSurfaceVariant, mb: 0.5 }}>
+          {greeting()}
+        </Typography>
+        <Typography
+          variant="displayMediumEmphasized"
+          component="h1"
+          sx={{
+            fontWeight: 760,
+            fontStretch: '118%',
+            letterSpacing: '-0.035em',
+            lineHeight: 1,
+            background: `linear-gradient(100deg, ${c.primary} 10%, ${c.tertiary} 90%)`,
+            WebkitBackgroundClip: 'text',
+            backgroundClip: 'text',
+            color: 'transparent',
+            pb: 0.5,
+          }}
+        >
+          Organiuzer
+        </Typography>
+        <Typography variant="bodyMedium" component="p" sx={{ color: c.onSurfaceVariant, mt: 1 }}>
+          Pick a folder, review the plan, apply it.
+        </Typography>
+      </Box>
+    </Box>
+  );
+}
+
+/** Hero moment #2: the primary action. Large container that squares up on press (shape morph). */
+function StartButton({ sx, onClick }) {
+  const { palette } = useTheme();
+  const c = palette.m3;
+  return (
+    <ButtonBase
+      onClick={onClick}
+      aria-label="Choose a folder to organize"
+      sx={{
+        ...sx,
+        position: 'relative',
+        overflow: 'hidden',
+        borderRadius: corner.xxl,
+        bgcolor: c.primary,
+        color: c.onPrimary,
+        display: 'flex',
+        alignItems: 'stretch',
+        justifyContent: 'stretch',
+        textAlign: 'left',
+        transition: [motion.spatial(['border-radius', 'transform']), motion.effects(['background-color'])].join(', '),
+        '&:hover': { bgcolor: stateLayer(c.primary, c.onPrimary, STATE.hover) },
+        '&:hover .start-shape': { transform: 'rotate(40deg) scale(1.06)' },
+        '&:hover .start-arrow': { transform: 'translateX(6px)' },
+        '&:active': { borderRadius: corner.xl, transform: 'scale(0.985)' },
+        '&.Mui-focusVisible': { outline: `3px solid ${c.primary}`, outlineOffset: 3 },
+      }}
+    >
+      {/* Decorative cookie shape bleeding off the corner */}
+      <Box
+        className="start-shape"
+        aria-hidden
+        sx={{ position: 'absolute', right: -60, bottom: -80, transition: motion.spatial(['transform'], 'slow') }}
+      >
+        <ExpressiveShape shape="cookie9" size={300} color={`color-mix(in srgb, ${c.onPrimary} 12%, transparent)`} />
+      </Box>
+
+      <Box sx={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', p: { xs: 3, md: 4 }, gap: 2, minHeight: 180 }}>
+        <Box sx={{ width: 56, height: 56, borderRadius: corner.lg, bgcolor: c.onPrimary, color: c.primary, display: 'grid', placeItems: 'center' }}>
+          <CreateNewFolderOutlinedIcon />
+        </Box>
+        <Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <Typography variant="displaySmallEmphasized" component="span" sx={{ fontWeight: 700, fontStretch: '110%', letterSpacing: '-0.02em', lineHeight: 1.05 }}>
+              Start
+            </Typography>
+            <ArrowForwardIcon className="start-arrow" sx={{ fontSize: 36, transition: motion.spatial(['transform'], 'fast') }} />
+          </Box>
+          <Typography variant="bodyLarge" component="span" sx={{ display: 'block', mt: 0.5, opacity: 0.86 }}>
+            Choose a folder, or drop one anywhere on this window
+          </Typography>
+        </Box>
+      </Box>
+    </ButtonBase>
+  );
+}
+
+function AiModelCard({ sx, settings, ready, onClick }) {
+  const { palette } = useTheme();
+  const c = palette.m3;
+  return (
+    <SurfaceCard
+      sx={sx}
+      tone={ready ? 'default' : 'tertiary'}
+      onClick={onClick}
+      ariaLabel="AI model settings"
+      icon={ready ? <MemoryOutlinedIcon /> : <KeyOutlinedIcon />}
+      title={ready ? 'AI model' : 'Connect an AI provider'}
+      action={
+        <Typography variant="labelMedium" sx={{ px: 1.5, py: 0.5, borderRadius: corner.full, bgcolor: ready ? c.secondaryContainer : c.onTertiaryContainer, color: ready ? c.onSecondaryContainer : c.tertiaryContainer }}>
+          {ready ? (settings?.provider === 'custom' ? 'Custom endpoint' : 'OpenAI') : 'Setup needed'}
+        </Typography>
+      }
+    >
+      <Box sx={{ mt: 'auto', minWidth: 0 }}>
+        {ready ? (
+          <Typography variant="headlineMediumEmphasized" component="p" noWrap sx={{ fontStretch: '108%' }}>
+            {settings?.model || 'gpt-4o'}
+          </Typography>
+        ) : (
+          <Typography variant="bodyLarge" component="p" sx={{ maxWidth: 420 }}>
+            Add an API key or a local endpoint so Organiuzer can plan your folders.
+          </Typography>
+        )}
+      </Box>
+    </SurfaceCard>
+  );
+}
+
+function SettingsTile({ sx, onClick }) {
+  const { palette } = useTheme();
+  const c = palette.m3;
+  return (
+    <Tooltip title="Settings">
+      <ButtonBase
+        onClick={onClick}
+        aria-label="Open settings"
+        sx={{
+          ...sx,
+          borderRadius: corner.xl,
+          bgcolor: c.secondaryContainer,
+          color: c.onSecondaryContainer,
+          display: 'grid',
+          placeItems: 'center',
+          transition: [motion.spatial(['border-radius']), motion.effects(['background-color'])].join(', '),
+          '&:hover': { bgcolor: stateLayer(c.secondaryContainer, c.onSecondaryContainer, STATE.hover), borderRadius: corner.xxl },
+          '&:hover svg': { transform: 'rotate(90deg)' },
+          '&:active': { borderRadius: corner.lg },
+          '&.Mui-focusVisible': { outline: `2px solid ${c.primary}`, outlineOffset: 2 },
+        }}
+      >
+        <SettingsOutlinedIcon sx={{ fontSize: 56, transition: motion.spatial(['transform'], 'slow') }} />
+      </ButtonBase>
+    </Tooltip>
+  );
+}

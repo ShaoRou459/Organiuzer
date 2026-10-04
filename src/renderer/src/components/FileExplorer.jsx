@@ -1,376 +1,182 @@
-import React, { useState } from 'react';
+import React, { useDeferredValue, useMemo, useState } from 'react';
 import {
-  Box, Typography, Collapse, IconButton, Chip, Tooltip, Grid
+  Box, Typography, ButtonBase, InputBase, ToggleButton, ToggleButtonGroup, Tooltip, useTheme,
 } from '@mui/material';
-import FolderIcon from '@mui/icons-material/Folder';
-import FolderOpenIcon from '@mui/icons-material/FolderOpen';
-import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import ChevronRightIcon from '@mui/icons-material/ChevronRight';
-import CircularProgress from '@mui/material/CircularProgress';
-import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
+import SearchIcon from '@mui/icons-material/Search';
+import CloseIcon from '@mui/icons-material/Close';
+import VisibilityOffOutlinedIcon from '@mui/icons-material/VisibilityOffOutlined';
+import FolderOffOutlinedIcon from '@mui/icons-material/FolderOffOutlined';
+import IconButton from '@mui/material/IconButton';
+import FileIcon from './folder/FileIcon';
+import ExpressiveShape from './common/ExpressiveShape';
+import { corner, motion } from '../theme/tokens';
+import { stateLayer, STATE } from '../theme/theme';
+import { formatBytes, extensionOf, joinPath, formatNumber } from '../utils/format';
 import { truncateMiddle } from '../utils/truncateMiddle';
 
-// File type icon colors
-const getFileColor = (filename) => {
-  const ext = filename.split('.').pop()?.toLowerCase();
-  const colors = {
-    js: '#F7DF1E',
-    jsx: '#61DAFB',
-    ts: '#3178C6',
-    tsx: '#3178C6',
-    py: '#3776AB',
-    json: '#292929',
-    md: '#083FA1',
-    html: '#E34F26',
-    css: '#1572B6',
-    scss: '#CC6699',
-    png: '#89CFF0',
-    jpg: '#89CFF0',
-    jpeg: '#89CFF0',
-    gif: '#89CFF0',
-    svg: '#FFB13B',
-    pdf: '#FF0000',
-  };
-  return colors[ext] || 'action';
-};
-
-// Single file/folder item with expandable children
-function FileTreeItem({ item, fullPath, level = 0 }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [children, setChildren] = useState(null);
-  const [loading, setLoading] = useState(false);
-
-  const isFolder = item.type === 'folder';
-  const indent = level * 24;
-  const displayName = truncateMiddle(item.name, 28, 12, 11);
-
-  const handleToggle = async () => {
-    if (!isFolder) return;
-
-    if (!isOpen && !children) {
-      setLoading(true);
-      try {
-        const items = await window.electronAPI.scanFolder(fullPath);
-        const sorted = items.sort((a, b) => {
-          if (a.type === b.type) return a.name.localeCompare(b.name);
-          return a.type === 'folder' ? -1 : 1;
-        });
-        setChildren(sorted);
-      } catch (error) {
-        console.error("Failed to load folder:", error);
-      } finally {
-        setLoading(false);
-      }
-    }
-    setIsOpen(!isOpen);
-  };
-
-  return (
-    <Box>
-      {/* Item Row */}
-      <Box
-        onClick={handleToggle}
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          py: 0.75,
-          px: 1.5,
-          pl: `${indent + 12}px`,
-          cursor: isFolder ? 'pointer' : 'default',
-          borderRadius: 1.5,
-          transition: 'background-color 0.15s',
-          '&:hover': {
-            bgcolor: 'action.hover',
-          },
-        }}
-      >
-        {/* Expand/Collapse Icon */}
-        <Box sx={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          {isFolder && (
-            loading ? (
-              <CircularProgress size={16} />
-            ) : (
-              isOpen ? <ExpandMoreIcon fontSize="small" /> : <ChevronRightIcon fontSize="small" />
-            )
-          )}
-        </Box>
-
-        {/* File/Folder Icon */}
-        <Box sx={{ mr: 1.5, display: 'flex', alignItems: 'center' }}>
-          {isFolder ? (
-            isOpen ? (
-              <FolderOpenIcon sx={{ color: 'primary.main' }} />
-            ) : (
-              <FolderIcon sx={{ color: 'primary.main' }} />
-            )
-          ) : (
-            <InsertDriveFileIcon sx={{ color: getFileColor(item.name), fontSize: 20 }} />
-          )}
-        </Box>
-
-        {/* Name */}
-        <Tooltip title={item.name} placement="right" enterDelay={500}>
-          <Typography
-            variant="body2"
-            sx={{
-              flex: 1,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              fontWeight: isFolder ? 500 : 400,
-              color: item.hidden ? 'text.disabled' : (isFolder ? 'text.primary' : 'text.secondary'),
-              fontStyle: item.hidden ? 'italic' : 'normal',
-            }}
-          >
-            {displayName}
-          </Typography>
-        </Tooltip>
-
-        {/* Folder context info */}
-        {isFolder && item.context && (
-          <Box sx={{ display: 'flex', gap: 0.5, ml: 1 }}>
-            {item.context.fileCount > 0 && (
-              <Chip
-                size="small"
-                label={item.context.fileCount}
-                sx={{
-                  height: 20,
-                  fontSize: '0.7rem',
-                  bgcolor: 'action.selected',
-                  '& .MuiChip-label': { px: 1 }
-                }}
-              />
-            )}
-            {item.context.topExtensions?.slice(0, 2).map(ext => (
-              <Chip
-                key={ext}
-                size="small"
-                label={ext}
-                sx={{
-                  height: 20,
-                  fontSize: '0.65rem',
-                  bgcolor: 'background.surfaceContainerHigh',
-                  '& .MuiChip-label': { px: 0.75 }
-                }}
-              />
-            ))}
-          </Box>
-        )}
-      </Box>
-
-      {/* Children */}
-      {isFolder && (
-        <Collapse in={isOpen} timeout="auto" unmountOnExit>
-          <Box>
-            {children && children.length > 0 ? (
-              children.map((child) => (
-                <FileTreeItem
-                  key={child.name}
-                  item={child}
-                  fullPath={`${fullPath}/${child.name}`}
-                  level={level + 1}
-                />
-              ))
-            ) : children && children.length === 0 ? (
-              <Typography
-                variant="caption"
-                color="text.disabled"
-                sx={{ pl: `${indent + 60}px`, py: 1, display: 'block' }}
-              >
-                Empty folder
-              </Typography>
-            ) : null}
-          </Box>
-        </Collapse>
-      )}
-    </Box>
-  );
-}
-
-// Main grid view of root items
-function RootItemCard({ item, fullPath, onClick }) {
-  const isFolder = item.type === 'folder';
-  const isHidden = !!item.hidden;
-  const displayName = truncateMiddle(item.name, 24, 10, 9);
-
-  return (
-    <Box
-      onClick={onClick}
-      sx={{
-        p: 2,
-        borderRadius: 2,
-        bgcolor: 'background.paper',
-        border: '1px solid',
-        borderColor: isHidden ? 'divider' : 'divider',
-        borderStyle: isHidden ? 'dashed' : 'solid',
-        opacity: isHidden ? 0.55 : 1,
-        cursor: 'pointer',
-        transition: 'all 0.2s',
-        '&:hover': {
-          bgcolor: 'action.hover',
-          borderColor: 'primary.main',
-          transform: 'translateY(-2px)',
-          opacity: isHidden ? 0.75 : 1,
-        },
-      }}
-    >
-      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5 }}>
-        {isFolder ? (
-          <FolderIcon sx={{ color: 'primary.main', fontSize: 32 }} />
-        ) : (
-          <InsertDriveFileIcon sx={{ color: getFileColor(item.name), fontSize: 32 }} />
-        )}
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Tooltip title={item.name} placement="top" enterDelay={500}>
-            <Typography
-              variant="subtitle2"
-              fontWeight={500}
-              noWrap
-              sx={{ mb: 0.5, fontStyle: isHidden ? 'italic' : 'normal' }}
-            >
-              {displayName}
-            </Typography>
-          </Tooltip>
-
-          {isFolder && item.context && (
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-              <Chip
-                size="small"
-                label={`${item.context.fileCount} files`}
-                sx={{
-                  height: 20,
-                  fontSize: '0.7rem',
-                  bgcolor: 'action.selected',
-                  '& .MuiChip-label': { px: 1 }
-                }}
-              />
-              {item.context.topExtensions?.slice(0, 2).map(ext => (
-                <Chip
-                  key={ext}
-                  size="small"
-                  label={ext}
-                  variant="outlined"
-                  sx={{
-                    height: 20,
-                    fontSize: '0.65rem',
-                    borderColor: 'outlineVariant',
-                    '& .MuiChip-label': { px: 0.75 }
-                  }}
-                />
-              ))}
-              {item.context.truncated && (
-                <Chip
-                  size="small"
-                  label="500+"
-                  sx={{
-                    height: 20,
-                    fontSize: '0.65rem',
-                    bgcolor: 'warning.dark',
-                    color: 'warning.main',
-                    '& .MuiChip-label': { px: 0.75 }
-                  }}
-                />
-              )}
-            </Box>
-          )}
-
-          {isHidden && (
-            <Chip
-              size="small"
-              icon={<VisibilityOffIcon sx={{ fontSize: 12 }} />}
-              label="Hidden"
-              sx={{
-                height: 20,
-                fontSize: '0.65rem',
-                mt: 0.5,
-                bgcolor: 'action.disabledBackground',
-                color: 'text.disabled',
-                '& .MuiChip-label': { px: 0.75 },
-                '& .MuiChip-icon': { color: 'text.disabled', ml: 0.5 }
-              }}
-            />
-          )}
-
-          {!isFolder && !isHidden && (
-            <Typography variant="caption" color="text.disabled">
-              {item.name.split('.').pop()?.toUpperCase() || 'FILE'}
-            </Typography>
-          )}
-        </Box>
-      </Box>
-    </Box>
-  );
-}
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 export default function FileExplorer({ files, rootPath }) {
-  const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'tree'
-  const [expandedItems, setExpandedItems] = useState(new Set());
+  const { palette } = useTheme();
+  const c = palette.m3;
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('all');
+  const deferredQuery = useDeferredValue(query);
 
-  // Sort files: folders first, then alphabetically
-  const sortedFiles = [...files].sort((a, b) => {
-    if (a.type === b.type) return a.name.localeCompare(b.name);
-    return a.type === 'folder' ? -1 : 1;
-  });
+  const sorted = useMemo(() => [...files].sort((a, b) => {
+    if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+    return collator.compare(a.name, b.name);
+  }), [files]);
 
-  const folders = sortedFiles.filter(f => f.type === 'folder');
-  const filesOnly = sortedFiles.filter(f => f.type === 'file');
+  const folderCount = sorted.filter((f) => f.type === 'folder').length;
+  const fileCount = sorted.length - folderCount;
+
+  const visible = useMemo(() => {
+    const q = deferredQuery.trim().toLowerCase();
+    return sorted.filter((f) => {
+      if (filter === 'folders' && f.type !== 'folder') return false;
+      if (filter === 'files' && f.type !== 'file') return false;
+      return !q || f.name.toLowerCase().includes(q);
+    });
+  }, [sorted, filter, deferredQuery]);
 
   if (files.length === 0) {
     return (
-      <Box sx={{
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        color: 'text.disabled',
-        py: 8
-      }}>
-        <FolderOpenIcon sx={{ fontSize: 64, mb: 2, opacity: 0.5 }} />
-        <Typography variant="h6">This folder is empty</Typography>
+      <Box sx={{ flex: 1, display: 'grid', placeItems: 'center', py: 8 }}>
+        <Box sx={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+          <ExpressiveShape shape="clover4" size={96} color={c.surfaceContainerHighest}>
+            <FolderOffOutlinedIcon sx={{ fontSize: 36, color: c.onSurfaceVariant }} />
+          </ExpressiveShape>
+          <Typography variant="titleLarge">This folder is empty</Typography>
+          <Typography variant="bodyMedium" sx={{ color: c.onSurfaceVariant }}>Nothing to organize here yet.</Typography>
+        </Box>
       </Box>
     );
   }
 
   return (
-    <Box sx={{ height: '100%' }}>
-      {/* Grid View for root items */}
-      {folders.length > 0 && (
-        <Box sx={{ mb: 3 }}>
-          <Typography variant="overline" color="text.secondary" sx={{ px: 1, mb: 1, display: 'block' }}>
-            Folders ({folders.length})
-          </Typography>
-          <Grid container spacing={1.5}>
-            {folders.map((item) => (
-              <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }} key={item.name}>
-                <RootItemCard
-                  item={item}
-                  fullPath={`${rootPath}/${item.name}`}
-                />
-              </Grid>
-            ))}
-          </Grid>
+    <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 }}>
+      {/* Search + filter */}
+      <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap', mb: 2 }}>
+        <Box
+          sx={{
+            flex: '1 1 260px',
+            maxWidth: 420,
+            height: 48,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+            pl: 2,
+            pr: 0.5,
+            borderRadius: corner.full,
+            bgcolor: c.surfaceContainerHigh,
+            transition: motion.effects(['background-color']),
+            '&:focus-within': { bgcolor: c.surfaceContainerHighest, outline: `2px solid ${c.primary}`, outlineOffset: -2 },
+          }}
+        >
+          <SearchIcon sx={{ color: c.onSurfaceVariant }} />
+          <InputBase
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={`Search ${formatNumber(files.length)} items`}
+            inputProps={{ 'aria-label': 'Search items in this folder' }}
+            sx={{ flex: 1, typography: 'bodyLarge', color: c.onSurface, '& input': { userSelect: 'text' } }}
+          />
+          {query && (
+            <IconButton size="small" aria-label="Clear search" onClick={() => setQuery('')}>
+              <CloseIcon fontSize="small" />
+            </IconButton>
+          )}
         </Box>
-      )}
 
-      {filesOnly.length > 0 && (
-        <Box>
-          <Typography variant="overline" color="text.secondary" sx={{ px: 1, mb: 1, display: 'block' }}>
-            Files ({filesOnly.length})
+        <ToggleButtonGroup
+          exclusive
+          value={filter}
+          onChange={(_e, v) => v && setFilter(v)}
+          aria-label="Show"
+        >
+          <ToggleButton value="all">All</ToggleButton>
+          <ToggleButton value="folders" disabled={!folderCount}>Folders {folderCount}</ToggleButton>
+          <ToggleButton value="files" disabled={!fileCount}>Files {fileCount}</ToggleButton>
+        </ToggleButtonGroup>
+      </Box>
+
+      {/* Items */}
+      <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', mx: -1, px: 1, pb: 14 }}>
+        {visible.length === 0 ? (
+          <Typography variant="bodyMedium" sx={{ color: c.onSurfaceVariant, py: 6, textAlign: 'center' }}>
+            No items match “{query}”.
           </Typography>
-          <Grid container spacing={1.5}>
-            {filesOnly.map((item) => (
-              <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }} key={item.name}>
-                <RootItemCard
-                  item={item}
-                  fullPath={`${rootPath}/${item.name}`}
-                />
-              </Grid>
+        ) : (
+          <Box component="ul" sx={{ listStyle: 'none', m: 0, p: 0, display: 'grid', gap: 1, gridTemplateColumns: 'repeat(auto-fill, minmax(232px, 1fr))' }}>
+            {visible.map((item) => (
+              <li key={item.name}>
+                <ItemTile item={item} fullPath={joinPath(rootPath, item.name)} />
+              </li>
             ))}
-          </Grid>
-        </Box>
-      )}
+          </Box>
+        )}
+      </Box>
     </Box>
+  );
+}
+
+function ItemTile({ item, fullPath }) {
+  const { palette } = useTheme();
+  const c = palette.m3;
+  const isFolder = item.type === 'folder';
+  const ctx = item.context;
+
+  const meta = isFolder
+    ? [ctx ? `${formatNumber(ctx.fileCount)}${ctx.truncated ? '+' : ''} ${ctx.fileCount === 1 ? 'file' : 'files'}` : 'Folder', ...(ctx?.topExtensions || []).slice(0, 2)].join('  ')
+    : [extensionOf(item.name).toUpperCase() || 'File', formatBytes(item.size)].join('  ');
+
+  const open = () => {
+    if (isFolder) window.electronAPI?.openPath(fullPath);
+    else window.electronAPI?.showItemInFolder(fullPath);
+  };
+
+  return (
+    <Tooltip title={isFolder ? `${item.name}. Double-click to open` : `${item.name}. Double-click to show in Explorer`} enterDelay={700} placement="top">
+      <ButtonBase
+        onDoubleClick={open}
+        onKeyDown={(e) => { if (e.key === 'Enter') open(); }}
+        sx={{
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1.5,
+          p: 1.5,
+          borderRadius: corner.lg,
+          bgcolor: c.surfaceContainerLow,
+          textAlign: 'left',
+          opacity: item.hidden ? 0.6 : 1,
+          outline: item.hidden ? `1px dashed ${c.outlineVariant}` : 'none',
+          outlineOffset: -1,
+          transition: motion.effects(['background-color']),
+          '&:hover': { bgcolor: stateLayer(c.surfaceContainerLow, c.onSurface, STATE.hover) },
+          '&.Mui-focusVisible': { outline: `2px solid ${c.primary}`, outlineOffset: -2 },
+        }}
+      >
+        <FileIcon item={item} />
+        <Box sx={{ minWidth: 0, flex: 1 }}>
+          <Typography variant={isFolder ? 'titleSmall' : 'bodyMedium'} component="p" noWrap sx={{ color: c.onSurface }}>
+            {truncateMiddle(item.name, 30, 16, 11)}
+          </Typography>
+          <Typography variant="bodySmall" component="p" noWrap sx={{ color: c.onSurfaceVariant, whiteSpace: 'pre' }}>
+            {item.hidden ? (
+              <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+                <VisibilityOffOutlinedIcon sx={{ fontSize: 14 }} /> Hidden, AI skips it
+              </Box>
+            ) : meta}
+          </Typography>
+        </Box>
+        {ctx?.markers?.length > 0 && (
+          <Typography variant="labelSmall" sx={{ px: 1, py: 0.25, borderRadius: corner.sm, bgcolor: c.tertiaryContainer, color: c.onTertiaryContainer, flexShrink: 0 }}>
+            Project
+          </Typography>
+        )}
+      </ButtonBase>
+    </Tooltip>
   );
 }

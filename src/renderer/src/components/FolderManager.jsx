@@ -1,1838 +1,712 @@
-import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import {
-  Box, Typography, Button, CircularProgress,
-  Paper, Alert, Snackbar, IconButton, Drawer, Divider,
-  List, ListItem, ListItemIcon, Chip, Tooltip,
-  LinearProgress, Grid, Card, CardActionArea, Fade, useTheme,
-  Dialog, DialogTitle, DialogContent, DialogActions, Menu, MenuItem, Checkbox, FormControlLabel, ListItemText
-} from '@mui/material';
-import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import HistoryIcon from '@mui/icons-material/History';
-import FolderOpenIcon from '@mui/icons-material/FolderOpen';
-import CloseIcon from '@mui/icons-material/Close';
-import RefreshIcon from '@mui/icons-material/Refresh';
-import FolderIcon from '@mui/icons-material/Folder';
-import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
-import TipsAndUpdatesIcon from '@mui/icons-material/TipsAndUpdates';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import SettingsIcon from '@mui/icons-material/Settings';
-import MoreVertIcon from '@mui/icons-material/MoreVert';
-import DeleteIcon from '@mui/icons-material/Delete';
-import ArrowForwardIosIcon from '@mui/icons-material/ArrowForwardIos';
-import DnDOrganizer from './DnDOrganizer';
-import FileExplorer from './FileExplorer';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Box } from '@mui/material';
+import { AnimatePresence, motion as m } from 'framer-motion';
+import UndoIcon from '@mui/icons-material/Undo';
+import FolderHeader from './folder/FolderHeader';
+import IdlePanel from './folder/IdlePanel';
+import DedupePanel from './folder/DedupePanel';
+import RenamePanel from './folder/RenamePanel';
+import VersionsPanel from './folder/VersionsPanel';
+import SearchPanel from './folder/SearchPanel';
+import PresetPanel from './folder/PresetPanel';
+import ProgressPanel from './folder/ProgressPanel';
+import ReviewPanel from './folder/ReviewPanel';
+import CompletePanel from './folder/CompletePanel';
+import HistorySheet from './folder/HistorySheet';
+import { PlanIssueDialog, ConfirmDialog } from './folder/Dialogs';
+import { useSnackbar } from '../context/SnackbarContext';
+import { springs } from '../theme/tokens';
+import { normalizePlan, validatePlan, countPlanItems, prunePlan, summarizePlan } from '../utils/plan';
+import { pluralize, normalizeKeyPath } from '../utils/format';
 import { truncateMiddle } from '../utils/truncateMiddle';
 
-export default function FolderManager({ path, onBack, onOpenSettings }) {
-  const theme = useTheme();
+const api = () => window.electronAPI;
+const KNOWN_CATEGORY_NAMES = new Set([
+  'images', 'pictures', 'photos', 'videos', 'audio', 'music', 'documents', 'docs',
+  'archives', 'installers', 'downloads', 'projects', 'code_projects', 'misc', 'screenshots',
+]);
+const EMPTY_ISSUE = { open: false, title: '', message: '', details: [], retryContext: null };
+
+export default function FolderManager({ path, onBack, onOpenSettings, hasAiConfig }) {
+  const { notify } = useSnackbar();
   const [files, setFiles] = useState([]);
-  const [status, setStatus] = useState('scanning'); // scanning, idle, analyzing, reviewing, executing, reverting, complete
+  const filesRef = useRef([]);
+  // scanning | idle | deduping | renaming | analyzing | reviewing | executing | reverting | complete
+  const [status, setStatus] = useState('scanning');
   const [plan, setPlan] = useState(null);
-  const [completionStats, setCompletionStats] = useState(null);
-  const [history, setHistory] = useState([]);
-  const [lastRunId, setLastRunId] = useState(null);
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-  const [showAiOutput, setShowAiOutput] = useState(false);
-  const [notification, setNotification] = useState({ open: false, message: '', severity: 'success' });
-  const [pathCopied, setPathCopied] = useState(false);
+  const [planSource, setPlanSource] = useState('ai');
+  const [documentBusy, setDocumentBusy] = useState(false);
+  const [excluded, setExcluded] = useState([]);
   const [aiStream, setAiStream] = useState('');
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [executeProgress, setExecuteProgress] = useState({ total: 0, processed: 0, moved: 0, current: null });
   const [categoryFolders, setCategoryFolders] = useState([]);
-  const [planIssue, setPlanIssue] = useState({ open: false, title: '', message: '', details: [], retryContext: null });
+  const [planIssue, setPlanIssue] = useState(EMPTY_ISSUE);
+  const [runs, setRuns] = useState([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [completion, setCompletion] = useState(null);
+  const [confirmUndo, setConfirmUndo] = useState(null);
 
-  // Dedupe state
-  const [isToolsExpanded, setIsToolsExpanded] = useState(false);
-  const [dedupeRecursive, setDedupeRecursive] = useState(false);
-  const [dedupeBeforeOrganize, setDedupeBeforeOrganize] = useState(false);
-  const [autoOrganizeAfterDedupe, setAutoOrganizeAfterDedupe] = useState(false);
-
-  const [isDeduping, setIsDeduping] = useState(false);
+  // Duplicates
+  const [dedupeLoading, setDedupeLoading] = useState(false);
+  const [dedupeBusy, setDedupeBusy] = useState(false);
+  const [dedupeProgress, setDedupeProgress] = useState(null);
+  const [dedupeStats, setDedupeStats] = useState(null);
+  const [dedupeError, setDedupeError] = useState('');
   const [duplicates, setDuplicates] = useState([]);
   const [checkedDuplicates, setCheckedDuplicates] = useState({});
+  const dedupeRequest = useRef(0);
+  const dedupeActive = useRef(false);
 
-  const handleDedupeScan = async (willAutoOrganize = false) => {
-    setStatus('deduping');
-    setIsDeduping(true);
-    setAutoOrganizeAfterDedupe(willAutoOrganize);
+  const [renameStage, setRenameStage] = useState('candidates');
+  const [renameLoading, setRenameLoading] = useState(false);
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [renameCandidates, setRenameCandidates] = useState([]);
+  const [renameSuggestions, setRenameSuggestions] = useState([]);
+  const [renameChecked, setRenameChecked] = useState({});
+  const [renameSkipped, setRenameSkipped] = useState([]);
+  const [renameProgress, setRenameProgress] = useState(null);
+  const [renameError, setRenameError] = useState('');
+  const [renamePendingAi, setRenamePendingAi] = useState([]);
+  const [renameAiChecked, setRenameAiChecked] = useState({});
+  const [renameLocalOnly, setRenameLocalOnly] = useState(false);
+  const [renameDestination, setRenameDestination] = useState({});
+  const renameRequest = useRef(0);
+  const renameActive = useRef(false);
+
+  const mounted = useRef(true);
+  useEffect(() => {
+    // Re-arm on every mount (StrictMode mounts, unmounts, then mounts again in development).
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      dedupeRequest.current++;
+      if (dedupeActive.current) api()?.cancelFindDuplicates?.();
+      renameRequest.current++;
+      if (renameActive.current) api()?.cancelRenameSuggestions?.();
+    };
+  }, []);
+
+  // ---------------------------------------------------------------- data
+
+  const loadHistory = useCallback(async () => {
     try {
-      const dups = await window.electronAPI.findDuplicates(path, dedupeRecursive);
-      setDuplicates(dups || []);
-      // auto-check everything except the first of each group
-      const newChecked = {};
-      (dups || []).forEach((group, gIdx) => {
-        group.files.forEach((file, fIdx) => {
-          if (fIdx > 0) newChecked[`${gIdx}-${fIdx}`] = file;
-        });
-      });
-      setCheckedDuplicates(newChecked);
-
-      if ((!dups || dups.length === 0) && willAutoOrganize) {
-        // Proceed to organize shortly if there are no duplicates
-        setTimeout(() => {
-          handleAnalyze();
-        }, 1500);
-      }
+      const list = await api().getRunHistory();
+      const key = normalizeKeyPath(path);
+      setRuns((Array.isArray(list) ? list : []).filter((r) => normalizeKeyPath(r?.dirPath) === key));
     } catch (e) {
-      setNotification({ open: true, message: 'Failed to scan duplicates.', severity: 'error' });
-      if (!willAutoOrganize) {
-        setStatus('idle');
-      }
-    } finally {
-      setIsDeduping(false);
+      console.error(e);
     }
-  };
+  }, [path]);
 
-  const handleDeleteDuplicates = async () => {
-    const filesToDelete = Object.values(checkedDuplicates);
-    if (!filesToDelete.length) {
-      if (autoOrganizeAfterDedupe) {
-        handleAnalyze();
-      } else {
-        setStatus('idle');
-      }
-      return;
-    }
-    setIsDeduping(true);
+  /** Reads the folder. `silent` keeps the current screen (used after moves/deletes). */
+  const scanFolder = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setStatus('scanning');
     try {
-      const result = await window.electronAPI.deleteFiles(filesToDelete);
-      setNotification({ open: true, message: `Deleted ${result.success} duplicates successfully.`, severity: 'success' });
-      await scanFolder(); // refresh
-      if (autoOrganizeAfterDedupe) {
-        handleAnalyze(); // auto proceed to sorting process!
-      } else {
-        setStatus('idle');
-      }
-    } catch (e) {
-      setNotification({ open: true, message: 'Errors occurred while deleting duplicates.', severity: 'warning' });
-    } finally {
-      setIsDeduping(false);
+      const result = await api().scanFolder(path);
+      if (!mounted.current) return [];
+      filesRef.current = result;
+      setFiles(result);
+
+      // Infer "pinned" category folders so the AI never nests or moves them.
+      try {
+        const existing = (await api().getCategoryFolders(path)) || [];
+        const inferred = result
+          .filter((it) => it.type === 'folder' && KNOWN_CATEGORY_NAMES.has(it.name.trim().toLowerCase().replace(/\s+/g, '_')))
+          .filter((it) => !(it.context?.markers?.length) && (it.context?.fileCount || 0) > 0)
+          .map((it) => it.name);
+        const merged = Array.from(new Set([...existing, ...inferred]));
+        const saved = merged.length !== existing.length ? await api().setCategoryFolders(path, merged) : existing;
+        setCategoryFolders(Array.isArray(saved) ? saved : merged);
+      } catch { }
+
+      if (!silent) setStatus('idle');
+      return result;
+    } catch (error) {
+      console.error(error);
+      notify('Couldn’t read this folder. It may have been moved or you may not have access.');
+      if (!silent) setStatus('idle');
+      return [];
     }
-  };
-
-  const handleDedupeCancel = () => {
-    setStatus('idle');
-    setAutoOrganizeAfterDedupe(false); // cancel sorting process if user backed out
-  };
-
-  const handlePrimaryOrganize = () => {
-    if (dedupeBeforeOrganize) {
-      handleDedupeScan(true);
-    } else {
-      handleAnalyze();
-    }
-  };
-
-  const handleToggleDuplicate = (gIdx, fIdx, file) => {
-    const key = `${gIdx}-${fIdx}`;
-    setCheckedDuplicates(prev => {
-      const next = { ...prev };
-      if (next[key]) delete next[key];
-      else next[key] = file;
-      return next;
-    });
-  };
-
-  const handleCopyPath = async () => {
-    try {
-      await navigator.clipboard.writeText(path);
-      setPathCopied(true);
-      setTimeout(() => setPathCopied(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy path:', err);
-    }
-  };
+  }, [path, notify]);
 
   useEffect(() => {
     scanFolder();
     loadHistory();
-  }, [path]);
+  }, [scanFolder, loadHistory]);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const pinned = await window.electronAPI?.getCategoryFolders?.(path);
-        setCategoryFolders(Array.isArray(pinned) ? pinned : []);
-      } catch {
-        setCategoryFolders([]);
-      }
-    })();
-  }, [path]);
-
-  useEffect(() => {
-    const offAnalyzeStream = window.electronAPI?.onAnalyzeStream?.((chunk) => {
+    const offStream = api()?.onAnalyzeStream?.((chunk) => {
       if (!chunk) return;
       setAiStream((prev) => {
         const next = prev + chunk;
-        // Keep UI responsive if the model returns a lot of text
-        return next.length > 8000 ? next.slice(-8000) : next;
+        return next.length > 12000 ? next.slice(-12000) : next;
       });
     });
-
-    const offExecuteProgress = window.electronAPI?.onExecuteProgress?.((progress) => {
-      if (!progress) return;
-      setExecuteProgress((prev) => ({ ...prev, ...progress }));
+    const offProgress = api()?.onExecuteProgress?.((p) => p && setExecuteProgress((prev) => ({ ...prev, ...p })));
+    const offDedupe = api()?.onDuplicateProgress?.((p) => {
+      if (dedupeActive.current && p?.rootPath === path && p.requestId === dedupeRequest.current) setDedupeProgress(p);
     });
-
+    const offRename = api()?.onRenameProgress?.((p) => {
+      if (renameActive.current && p?.rootPath === path && p.requestId === renameRequest.current) setRenameProgress(p);
+    });
     return () => {
-      try { offAnalyzeStream?.(); } catch { }
-      try { offExecuteProgress?.(); } catch { }
+      offStream?.();
+      offProgress?.();
+      offDedupe?.();
+      offRename?.();
     };
-  }, []);
+  }, [path]);
 
+  // Analysis has no real progress signal, so ease toward 95% and let streamed tokens push it along.
   useEffect(() => {
-    if (status !== 'analyzing') return;
-
+    if (status !== 'analyzing') return undefined;
     const timer = setInterval(() => {
-      setAnalysisProgress((prev) => {
-        if (prev >= 95) return prev;
-        if (prev < 55) return Math.min(95, prev + 6);
-        if (prev < 82) return Math.min(95, prev + 3);
-        return Math.min(95, prev + 1);
-      });
-    }, 220);
-
+      setAnalysisProgress((p) => (p >= 95 ? p : p + (p < 50 ? 3 : p < 80 ? 1.2 : 0.4)));
+    }, 250);
     return () => clearInterval(timer);
   }, [status]);
 
-  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  // ---------------------------------------------------------------- AI plan
 
-  const finalizeAnalyzeProgress = async () => {
+  const runAnalysis = useCallback(async ({ retryReason, previousPlan } = {}) => {
+    setPlanSource('ai');
+    setPlanIssue(EMPTY_ISSUE);
+    setAiStream('');
+    setAnalysisProgress(6);
+    setStatus('analyzing');
+
+    let pinned = categoryFolders;
+    try {
+      const fresh = await api().getCategoryFolders(path);
+      if (Array.isArray(fresh)) pinned = fresh;
+    } catch { }
+
+    const visible = filesRef.current.filter((f) => !f.hidden);
+    const res = await api().analyzeFolder(path, visible, { categoryFolders: pinned, retryReason, previousPlan }).catch((e) => ({ ok: false, error: e?.message }));
+    if (!mounted.current) return;
+
+    if (res?.cancelled) {
+      setStatus('idle');
+      notify('Analysis canceled');
+      return;
+    }
+    if (!res?.ok) {
+      setStatus(previousPlan ? 'reviewing' : 'idle');
+      const msg = res?.error || 'AI analysis failed.';
+      const settingsRelated = /key|settings|model|base url|provider/i.test(msg);
+      notify(msg, settingsRelated ? { action: { label: 'Settings', onClick: () => onOpenSettings('ai') } } : {});
+      return;
+    }
+
+    const normalized = normalizePlan(res.plan);
+    if (!normalized || countPlanItems(normalized) === 0) {
+      setAnalysisProgress(100);
+      setStatus('idle');
+      notify('This folder already looks organized. Nothing to move.');
+      return;
+    }
+
     setAnalysisProgress(100);
-    await sleep(450);
-  };
+    await new Promise((r) => setTimeout(r, 350));
+    if (!mounted.current) return;
+    setPlan(normalized);
+    setExcluded([]);
+    setStatus('reviewing');
+  }, [categoryFolders, path, notify, onOpenSettings]);
 
-  const scanFolder = async () => {
-    setStatus('scanning');
-    try {
-      const result = await window.electronAPI.scanFolder(path);
-      setFiles(result);
+  const cancelAnalysis = () => api().cancelAnalyze();
 
-      // Best-effort: infer and persist "pinned category folders" so we don't accidentally nest/move them.
-      try {
-        const pinned = await window.electronAPI?.getCategoryFolders?.(path);
-        const existingPinned = Array.isArray(pinned) ? pinned : [];
-
-        const normalize = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, '_');
-        const KNOWN_CATEGORY_NAMES = [
-          'images', 'pictures', 'photos', 'videos', 'audio', 'music', 'documents', 'docs',
-          'archives', 'installers', 'downloads', 'projects', 'code_projects', 'misc', 'screenshots'
-        ];
-        const knownSet = new Set(KNOWN_CATEGORY_NAMES);
-
-        const inferred = (result || [])
-          .filter((it) => it?.type === 'folder')
-          .filter((it) => {
-            const nameNorm = normalize(it.name);
-            if (!knownSet.has(nameNorm)) return false;
-            const markers = it?.context?.markers || [];
-            if (Array.isArray(markers) && markers.length > 0) return false;
-            const fileCount = it?.context?.fileCount || 0;
-            return fileCount > 0;
-          })
-          .map((it) => it.name);
-
-        const merged = Array.from(new Set([...(existingPinned || []), ...inferred]));
-        if (merged.length !== existingPinned.length) {
-          const saved = await window.electronAPI?.setCategoryFolders?.(path, merged);
-          setCategoryFolders(Array.isArray(saved) ? saved : merged);
-        } else {
-          setCategoryFolders(existingPinned);
-        }
-      } catch { }
-
-      setStatus('idle');
-    } catch (error) {
-      console.error(error);
-      setNotification({ open: true, message: 'Failed to scan folder.', severity: 'error' });
-      setStatus('idle');
-    }
-  };
-
-  const loadHistory = async () => {
-    try {
-      const runs = await window.electronAPI.getRunHistory();
-      const list = Array.isArray(runs) ? runs : [];
-      const currentKey = String(path || '').trim().toLowerCase();
-      const filtered = list.filter((run) => String(run?.dirPath || '').trim().toLowerCase() === currentKey);
-      setHistory(filtered);
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const normalizePlan = (rawPlan) => {
-    if (!rawPlan || typeof rawPlan !== 'object') return null;
-    const normalized = {};
-    Object.keys(rawPlan).forEach((key) => {
-      const cat = rawPlan[key] || {};
-      const items = Array.isArray(cat.items)
-        ? cat.items
-        : Array.isArray(cat.files)
-          ? cat.files
-          : [];
-      normalized[key] = {
-        ...cat,
-        items: items
-          .map((item) => {
-            if (typeof item === 'string') {
-              return { name: item, type: 'file' };
-            }
-            if (!item || typeof item !== 'object') return null;
-            const name = typeof item.name === 'string' ? item.name : '';
-            if (!name) return null;
-            const type = item.type === 'folder' ? 'folder' : 'file';
-            return { ...item, name, type };
-          })
-          .filter(Boolean)
-      };
-    });
-    return normalized;
-  };
-
-  const handleAnalyze = async () => {
-    setStatus('analyzing');
-    setAiStream('');
-    setAnalysisProgress(8);
-    setShowAiOutput(false);
-    try {
-      // Exclude hidden items from AI analysis — they should never be reorganized
-      const visibleFiles = files.filter((f) => !f.hidden);
-      let result = await window.electronAPI.analyzeFolder(path, visibleFiles, { categoryFolders });
-
-      if (result.plan && result.debug) {
-        result = result.plan;
-      }
-
-      // Check if the plan is empty (nothing to organize)
-      if (!result || Object.keys(result).length === 0) {
-        await finalizeAnalyzeProgress();
-        setNotification({
-          open: true,
-          message: 'This folder is already well organized! No changes needed.',
-          severity: 'info'
-        });
-        setStatus('idle');
-        return;
-      }
-
-      const normalizedPlan = normalizePlan(result);
-      if (!normalizedPlan) {
-        throw new Error('Invalid plan returned by AI.');
-      }
-
-      // Check if there are actually items to move
-      const totalItems = Object.values(normalizedPlan).reduce(
-        (sum, cat) => sum + (cat.items?.length || 0), 0
-      );
-
-      if (totalItems === 0) {
-        await finalizeAnalyzeProgress();
-        setNotification({
-          open: true,
-          message: 'This folder is already well organized! No changes needed.',
-          severity: 'info'
-        });
-        setStatus('idle');
-        return;
-      }
-
-      await finalizeAnalyzeProgress();
-      setPlan(normalizedPlan);
-      setStatus('reviewing');
-    } catch (error) {
-      setNotification({ open: true, message: 'AI Analysis failed. Check API Key.', severity: 'error' });
-      setStatus('idle');
-    }
-  };
-
-  const validatePlan = (candidatePlan) => {
-    const errors = [];
-    if (!candidatePlan || typeof candidatePlan !== 'object') {
-      errors.push('Plan is empty or invalid.');
-      return errors;
-    }
-
-    const planCategories = Object.keys(candidatePlan);
-    const platformSource = typeof navigator === 'undefined' ? '' : (navigator.platform || navigator.userAgent || '');
-    const platform = platformSource.toLowerCase();
-    const caseFold = platform.includes('win') || platform.includes('mac');
-    const normalizeKey = (value) => {
-      const trimmed = String(value || '').trim();
-      return caseFold ? trimmed.toLowerCase() : trimmed;
-    };
-    const protectedSet = new Set([...(categoryFolders || []), ...planCategories].map(normalizeKey));
-
-    const invalidName = (name) => {
-      if (!name || typeof name !== 'string') return true;
-      const trimmed = name.trim();
-      if (trimmed.length === 0) return true;
-      if (trimmed === '.' || trimmed === '..') return true;
-      if (trimmed.includes('/') || trimmed.includes('\\')) return true;
-      if (trimmed.includes('..')) return true;
-      if (/[<>:"|?*]/.test(trimmed)) return true;
-      return false;
-    };
-
-    const rootItemByName = new Map(files.map((f) => [normalizeKey(f.name), f]));
-    const categoryKeys = new Set();
-
-    for (const category of planCategories) {
-      if (invalidName(category)) {
-        errors.push(`Invalid category name "${category}".`);
-      }
-      const categoryKey = normalizeKey(category);
-      if (categoryKeys.has(categoryKey)) {
-        errors.push(`Duplicate category name detected: "${category}".`);
-      }
-      categoryKeys.add(categoryKey);
-      const existing = rootItemByName.get(categoryKey);
-      if (existing?.type === 'file') {
-        errors.push(`Category "${category}" conflicts with an existing file of the same name.`);
-      }
-    }
-
-    const seen = new Set();
-    for (const [category, data] of Object.entries(candidatePlan)) {
-      const items = data?.items || data?.files || [];
-      for (const item of items) {
-        const name = typeof item === 'string' ? item : item?.name;
-        const type = typeof item === 'string' ? 'file' : item?.type;
-        if (!name) {
-          errors.push(`Category "${category}" contains an item without a name.`);
-          continue;
-        }
-        if (invalidName(name)) {
-          errors.push(`Category "${category}" contains an invalid item name "${name}".`);
-          continue;
-        }
-        const nameKey = normalizeKey(name);
-        const categoryKey = normalizeKey(category);
-        if (nameKey === categoryKey) {
-          errors.push(`Category "${category}" cannot include itself as an item.`);
-          continue;
-        }
-        if (seen.has(nameKey)) {
-          errors.push(`Item "${name}" appears in more than one category.`);
-        }
-        seen.add(nameKey);
-
-        if (type === 'folder' && protectedSet.has(nameKey) && nameKey !== categoryKey) {
-          errors.push(`Protected category folder "${name}" cannot be moved into "${category}".`);
-        }
-      }
-    }
-
-    return errors;
-  };
-
-  const retryAnalyze = async (retryReason, previousPlan) => {
-    setPlanIssue({ open: false, title: '', message: '', details: [], retryContext: null });
-    setAiStream('');
-    setAnalysisProgress(8);
-    setShowAiOutput(false);
-    setStatus('analyzing');
-
-    try {
-      // Refresh pinned categories (they may have been updated by previous runs)
-      const pinned = await window.electronAPI?.getCategoryFolders?.(path);
-      const pinnedList = Array.isArray(pinned) ? pinned : categoryFolders;
-      setCategoryFolders(pinnedList);
-
-      let result = await window.electronAPI.analyzeFolder(path, files.filter((f) => !f.hidden), {
-        categoryFolders: pinnedList,
-        retryReason,
-        previousPlan
-      });
-
-      if (result.plan && result.debug) {
-        result = result.plan;
-      }
-
-      if (!result || Object.keys(result).length === 0) {
-        await finalizeAnalyzeProgress();
-        setNotification({
-          open: true,
-          message: 'AI returned an empty plan. Nothing to organize.',
-          severity: 'info'
-        });
-        setStatus('idle');
-        return;
-      }
-
-      const normalizedPlan = normalizePlan(result);
-      if (!normalizedPlan) {
-        throw new Error('Invalid plan returned by AI.');
-      }
-
-      const totalItems = Object.values(normalizedPlan).reduce(
-        (sum, cat) => sum + (cat.items?.length || 0), 0
-      );
-
-      if (totalItems === 0) {
-        await finalizeAnalyzeProgress();
-        setNotification({
-          open: true,
-          message: 'This folder is already well organized! No changes needed.',
-          severity: 'info'
-        });
-        setStatus('idle');
-        return;
-      }
-
-      await finalizeAnalyzeProgress();
-      setPlan(normalizedPlan);
-      setStatus('reviewing');
-    } catch (e) {
-      setNotification({ open: true, message: 'AI retry failed. Check settings / API key.', severity: 'error' });
-      setStatus('idle');
-    }
-  };
+  // ---------------------------------------------------------------- apply / undo
 
   const handleApply = async () => {
-    try {
-      const planValidationErrors = validatePlan(plan);
-      if (planValidationErrors.length > 0) {
-        setPlanIssue({
-          open: true,
-          title: 'Plan Validation Failed',
-          message: 'This plan would create unsafe or invalid moves. You can cancel and edit the plan, or ask the AI to retry with these errors.',
-          details: planValidationErrors,
-          retryContext: { retryReason: planValidationErrors.join('\n'), previousPlan: plan }
-        });
-        setStatus('reviewing');
-        return;
-      }
-
-      setStatus('executing');
-
-      // Calculate stats before applying
-      const categories = Object.keys(plan);
-      const itemsByCategory = {};
-      let totalFiles = 0;
-      let totalFolders = 0;
-      let totalBytes = 0;
-
-      const platformSource = typeof navigator === 'undefined' ? '' : (navigator.platform || navigator.userAgent || '');
-      const platform = platformSource.toLowerCase();
-      const caseFold = platform.includes('win') || platform.includes('mac');
-      const normalizeKey = (value) => {
-        const trimmed = String(value || '').trim();
-        return caseFold ? trimmed.toLowerCase() : trimmed;
-      };
-      const rootItemByName = new Map(files.map((f) => [normalizeKey(f.name), f]));
-
-      categories.forEach(cat => {
-        const items = plan[cat].items || [];
-        itemsByCategory[cat] = items.length;
-        items.forEach(item => {
-          if (item.type === 'folder') totalFolders++;
-          else {
-            totalFiles++;
-            const nameKey = normalizeKey(item.name);
-            const actualFile = rootItemByName.get(nameKey);
-            totalBytes += (actualFile?.size || item.stats?.size || item.size || 0);
-          }
-        });
-      });
-
-      // Find top category
-      const topCategoryName = Object.entries(itemsByCategory).sort((a, b) => b[1] - a[1])[0]?.[0] || 'None';
-
-      const totalPlanned = categories.reduce((sum, cat) => sum + (plan[cat].items?.length || 0), 0);
-      setExecuteProgress({ total: totalPlanned, processed: 0, moved: 0, current: null });
-
-      const execResult = await window.electronAPI.executeOrganization(path, plan);
-
-      if (!execResult || execResult.ok !== true) {
-        const fatal = execResult?.fatalError;
-        const fatalMsg = fatal?.message || execResult?.fatalError || 'Unknown error';
-        const detailLines = [];
-        if (fatal?.code) detailLines.push(`code: ${fatal.code}`);
-        if (fatal?.category) detailLines.push(`category: ${fatal.category}`);
-        if (fatal?.name) detailLines.push(`item: ${fatal.name}`);
-        detailLines.push(fatalMsg);
-
-        setPlanIssue({
-          open: true,
-          title: 'Move Failed (Changes Reverted)',
-          message: 'A file move could not be executed, so changes were rolled back. You can cancel and edit the plan, or ask the AI to retry using this error.',
-          details: detailLines,
-          retryContext: { retryReason: detailLines.join('\n'), previousPlan: plan }
-        });
-        setStatus('reviewing');
-        return;
-      }
-
-      setLastRunId(execResult?.runId || null);
-
-      if (Array.isArray(execResult.warnings) && execResult.warnings.length > 0) {
-        setNotification({
-          open: true,
-          message: `Completed with ${execResult.warnings.length} note(s) (some items may have been renamed or skipped).`,
-          severity: 'info'
-        });
-      }
-
-      // Set completion stats
-      setCompletionStats({
-        categoriesCreated: categories.length,
-        categories: itemsByCategory,
-        filesMoved: totalFiles,
-        foldersMoved: totalFolders,
-        totalBytes,
-        topCategoryName,
-        totalItems: totalFiles + totalFolders,
-      });
-
-      setStatus('complete');
-      loadHistory();
-    } catch (error) {
-      setNotification({ open: true, message: 'Failed to apply changes.', severity: 'error' });
-      setStatus('reviewing');
-    }
-  };
-
-  const formatBytes = (bytes) => {
-    if (!bytes) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-  };
-
-  const formatRunTimestamp = (timestamp) => {
-    if (!timestamp) return 'Unknown time';
-    try {
-      return new Date(timestamp).toLocaleString();
-    } catch {
-      return 'Unknown time';
-    }
-  };
-
-  const formatRunFolder = (dirPath) => {
-    if (!dirPath) return 'Unknown folder';
-    const parts = String(dirPath).split(/[\\/]/).filter(Boolean);
-    return parts[parts.length - 1] || dirPath;
-  };
-
-  const handleRevertRun = async (runId) => {
-    if (!runId) return;
-    const previousStatus = status;
-    setStatus('reverting');
-    try {
-      const result = await window.electronAPI.revertRun(runId);
-      if (!result || result.ok !== true) {
-        setNotification({
-          open: true,
-          message: result?.error || 'Revert failed.',
-          severity: 'error'
-        });
-        setStatus(previousStatus === 'reverting' ? 'idle' : previousStatus);
-        return;
-      }
-
-      const warningsCount = Array.isArray(result.warnings) ? result.warnings.length : 0;
-      setNotification({
+    const toApply = prunePlan(plan);
+    const errors = validatePlan(toApply, filesRef.current, categoryFolders);
+    if (errors.length) {
+      setPlanIssue({
         open: true,
-        message: warningsCount > 0
-          ? `Revert complete with ${warningsCount} warning(s).`
-          : 'Revert complete.',
-        severity: warningsCount > 0 ? 'info' : 'success'
+        title: 'This plan needs a fix',
+        message: planSource === 'preset' ? 'Some moves would be unsafe or invalid. Edit the plan or change the preset destinations.' : 'Some moves would be unsafe or invalid. Edit the plan, or ask the AI to fix these problems.',
+        details: errors,
+        retryContext: planSource === 'ai' ? { retryReason: errors.join('\n'), previousPlan: toApply } : null,
       });
+      return;
+    }
 
-      setPlan(null);
-      setCompletionStats(null);
-      setExecuteProgress({ total: 0, processed: 0, moved: 0, current: null });
+    const total = countPlanItems(toApply);
+    setExecuteProgress({ total, processed: 0, moved: 0, current: null });
+    setStatus('executing');
 
-      await scanFolder();
-      await loadHistory();
-      setStatus('idle');
-    } catch (err) {
-      setNotification({ open: true, message: 'Revert failed.', severity: 'error' });
-      setStatus(previousStatus === 'reverting' ? 'idle' : previousStatus);
+    let result;
+    try {
+      result = await api().executeOrganization(path, toApply);
+    } catch (e) {
+      result = { ok: false, fatalError: { message: e?.message || 'Unknown error' } };
+    }
+    if (!mounted.current) return;
+
+    if (!result?.ok) {
+      const fatal = result?.fatalError || {};
+      setPlanIssue({
+        open: true,
+        title: 'Nothing was moved',
+        message: planSource === 'preset' ? 'One move failed, so every change from this run was rolled back. Edit the plan or change the preset destinations.' : 'One move failed, so every change from this run was rolled back. Edit the plan, or ask the AI to work around it.',
+        details: [fatal.message, fatal.name && `Item: ${fatal.name}`, fatal.category && `Folder: ${fatal.category}`, fatal.code && `Code: ${fatal.code}`].filter(Boolean),
+        retryContext: planSource === 'ai' ? { retryReason: [fatal.message, fatal.code].filter(Boolean).join('\n'), previousPlan: toApply } : null,
+      });
+      setStatus('reviewing');
+      return;
+    }
+
+    const run = result.run || { id: result.runId, moved: result.moved, moves: [] };
+    setCompletion({ stats: summarizePlan(toApply, filesRef.current), run, warnings: result.warnings || [], reverted: false });
+    setStatus('complete');
+    setPlan(null);
+    loadHistory();
+    scanFolder({ silent: true });
+    notify(`Moved ${pluralize(result.moved, 'item')}`, { action: { label: 'Undo', onClick: () => setConfirmUndo(run) } });
+  };
+
+  const doUndo = async (run) => {
+    setConfirmUndo(null);
+    if (!run?.id) return;
+    const previous = status;
+    setStatus('reverting');
+    const res = await api().revertRun(run.id).catch((e) => ({ ok: false, error: e?.message }));
+    if (!mounted.current) return;
+    if (!res?.ok) {
+      notify(res?.error || 'Undo failed.');
+      setStatus(previous === 'reverting' ? 'idle' : previous);
+      return;
+    }
+    const warnCount = res.warnings?.length || 0;
+    notify(warnCount ? `Put back ${pluralize(res.reverted, 'item')}. ${pluralize(warnCount, 'item')} couldn’t be restored.` : `Put back ${pluralize(res.reverted, 'item')}`);
+    await Promise.all([scanFolder({ silent: true }), loadHistory()]);
+    if (completion?.run?.id === run.id) {
+      setCompletion((cpl) => ({ ...cpl, reverted: true, warnings: res.warnings || [] }));
+      setStatus('complete');
+    } else {
+      setStatus(previous === 'complete' ? 'complete' : 'idle');
     }
   };
 
-  const handleCancelReview = () => {
-    setPlan(null);
+  // ---------------------------------------------------------------- duplicates
+
+  const startDedupe = async () => {
+    if (dedupeActive.current) return;
+    const request = ++dedupeRequest.current;
+    dedupeActive.current = true;
+    setDuplicates([]);
+    setCheckedDuplicates({});
+    setDedupeProgress(null);
+    setDedupeStats(null);
+    setDedupeError('');
+    setDedupeLoading(true);
+    setStatus('deduping');
+    try {
+      const result = await api().findDuplicates(path, true, request);
+      if (!mounted.current || request !== dedupeRequest.current) return;
+      if (result?.cancelled) { setStatus('idle'); return; }
+      if (!result?.ok) throw new Error(result?.error || 'Couldn’t scan for duplicates.');
+      const groups = result.groups || [];
+      const initial = {};
+      groups.forEach((g, gi) => g.files.forEach((f, fi) => { if (fi > 0) initial[`${gi}-${fi}`] = f; }));
+      setDuplicates(groups);
+      setCheckedDuplicates(initial);
+      setDedupeStats(result.stats);
+    } catch (error) {
+      if (!mounted.current || request !== dedupeRequest.current) return;
+      setDedupeError(error?.message || 'Couldn’t scan for duplicates.');
+    } finally {
+      if (mounted.current && request === dedupeRequest.current) {
+        dedupeActive.current = false;
+        setDedupeLoading(false);
+      }
+    }
+  };
+
+  const cancelDedupe = () => {
+    dedupeRequest.current++;
+    dedupeActive.current = false;
+    api().cancelFindDuplicates?.();
+    setDedupeLoading(false);
     setStatus('idle');
   };
 
-  // Get folder name from path
-  const folderName = path.split('/').filter(Boolean).pop() || path;
-
-  // Count stats
-  const folderCount = files.filter(f => f.type === 'folder').length;
-  const fileCount = files.filter(f => f.type === 'file').length;
-  const lastRun = history.find((run) => run?.id === lastRunId) || null;
-  const moveRecapItems = (() => {
-    const fromRun = Array.isArray(lastRun?.moves)
-      ? lastRun.moves
-        .map((rec, index) => {
-          const toPath = String(rec?.to || '');
-          const parts = toPath.split(/[\\/]/).filter(Boolean);
-          const name = parts[parts.length - 1] || '';
-          const category = parts[parts.length - 2] || 'Unknown';
-          if (!name) return null;
-          return { id: `run-${index}-${toPath}`, name, category };
-        })
-        .filter(Boolean)
-      : [];
-
-    if (fromRun.length > 0) {
-      return fromRun.reverse();
-    }
-
-    if (!plan || typeof plan !== 'object') return [];
-    const fromPlan = [];
-    Object.entries(plan).forEach(([category, data]) => {
-      const items = Array.isArray(data?.items) ? data.items : [];
-      items.forEach((item, index) => {
-        const name = typeof item === 'string' ? item : item?.name;
-        if (!name) return;
-        fromPlan.push({ id: `plan-${category}-${index}-${name}`, name, category });
-      });
+  const toggleDuplicate = (gi, fi, file) => {
+    const key = `${gi}-${fi}`;
+    const group = duplicates[gi];
+    setCheckedDuplicates((prev) => {
+      const next = { ...prev };
+      if (next[key]) {
+        delete next[key];
+        return next;
+      }
+      // Always keep at least one copy of every file.
+      const selectedInGroup = group.files.filter((_f, i) => next[`${gi}-${i}`]).length;
+      if (selectedInGroup >= group.files.length - 1) {
+        notify('One copy has to stay. Unselect another copy first.');
+        return prev;
+      }
+      next[key] = file;
+      return next;
     });
-    return fromPlan;
-  })();
-  const displayedMoveRecap = moveRecapItems.slice(0, 60);
-  const remainingMoveRecap = Math.max(0, moveRecapItems.length - displayedMoveRecap.length);
-  const isBusy = status === 'executing' || status === 'reverting' || status === 'analyzing' || status === 'scanning';
-  const streamProgress = Math.min(92, Math.round((aiStream.length / 8000) * 92));
-  const analyzeProgress = status === 'analyzing'
-    ? Math.max(analysisProgress, streamProgress)
-    : analysisProgress;
+  };
+
+  const confirmDedupe = async () => {
+    const list = Object.values(checkedDuplicates);
+    if (!list.length || dedupeBusy) return;
+    setDedupeError('');
+    setDedupeBusy(true);
+    try {
+      const res = await api().deleteFiles(path, list);
+      if (!mounted.current) return;
+      notify(res.failed
+        ? `Recycled ${pluralize(res.success, 'copy', 'copies')}. ${res.failed} couldn’t be moved to the Recycle Bin.`
+        : `Moved ${pluralize(res.success, 'copy', 'copies')} to the Recycle Bin`);
+      await scanFolder({ silent: true });
+      if (!mounted.current) return;
+      if (res.failed) {
+        const recycled = new Set(res.recycledPaths || []);
+        const remaining = duplicates.map((group) => ({ ...group, files: group.files.filter((file) => !recycled.has(file)) })).filter((group) => group.files.length > 1);
+        const failedChecked = {};
+        remaining.forEach((group, gi) => group.files.forEach((file, fi) => { if (list.includes(file)) failedChecked[`${gi}-${fi}`] = file; }));
+        setDuplicates(remaining);
+        setCheckedDuplicates(failedChecked);
+        const errors = res.errors || [];
+        const moreErrors = res.failed - Math.min(3, errors.length);
+        setDedupeError([`${pluralize(res.failed, 'copy', 'copies')} couldn’t be recycled.`, ...errors.slice(0, 3), moreErrors > 0 ? `${moreErrors} more errors. Scan again to refresh the results.` : ''].filter(Boolean).join('\n'));
+      } else setStatus('idle');
+    } catch (error) {
+      setDedupeError(error?.message || 'Something went wrong while recycling duplicates.');
+    } finally {
+      if (mounted.current) setDedupeBusy(false);
+    }
+  };
+
+  // ---------------------------------------------------------------- smart rename
+
+  const startRename = async () => {
+    if (renameActive.current) return;
+    const request = ++renameRequest.current;
+    renameActive.current = true;
+    setRenameStage('candidates');
+    setRenameLoading(true);
+    setRenameError('');
+    setRenameCandidates([]);
+    setRenameSuggestions([]);
+    setRenamePendingAi([]);
+    setRenameAiChecked({});
+    setRenameSkipped([]);
+    setRenameChecked({});
+    setRenameProgress(null);
+    setStatus('renaming');
+    try {
+      const result = await api().findRenameCandidates(path);
+      if (!mounted.current || request !== renameRequest.current) return;
+      if (!result?.ok) throw new Error(result?.error || 'Couldn’t check filenames.');
+      const candidates = result.candidates || [];
+      setRenameCandidates(candidates);
+      setRenameSkipped(result.skipped || []);
+      setRenameChecked(Object.fromEntries(candidates.map(row => [row.id, true])));
+    } catch (error) {
+      if (mounted.current && request === renameRequest.current) setRenameError(error?.message || 'Couldn’t check filenames.');
+    } finally {
+      if (mounted.current && request === renameRequest.current) {
+        renameActive.current = false;
+        setRenameLoading(false);
+      }
+    }
+  };
+
+  const cancelRename = () => {
+    renameRequest.current++;
+    renameActive.current = false;
+    api().cancelRenameSuggestions?.();
+    setRenameLoading(false);
+    setStatus('idle');
+  };
+
+  const generateNames = async () => {
+    const selected = renameCandidates.filter(row => renameChecked[row.id]).map(row => row.id);
+    if (!selected.length || renameActive.current) return;
+    const request = ++renameRequest.current;
+    renameActive.current = true;
+    setRenameStage('generating');
+    setRenameError('');
+    setRenameProgress(null);
+    try {
+      const result = await api().suggestRenames(path, selected, request, { localOnly: renameLocalOnly });
+      if (!mounted.current || request !== renameRequest.current) return;
+      if (result?.cancelled) { setStatus('idle'); return; }
+      if (!result?.ok) throw new Error(result?.error || 'Couldn’t suggest filenames.');
+      const suggestions = result.suggestions || [];
+      setRenameSuggestions(suggestions);
+      setRenameChecked(Object.fromEntries(suggestions.map(row => [row.id, true])));
+      setRenamePendingAi(result.pendingAi || []);
+      setRenameAiChecked(Object.fromEntries((result.pendingAi || []).map(row => [row.id, true])));
+      setRenameDestination({ aiProvider: result.aiProvider, aiModel: result.aiModel });
+      setRenameSkipped(previous => [...previous, ...(result.skipped || [])]);
+      setRenameStage(result.pendingAi?.length ? 'privacy' : 'review');
+    } catch (error) {
+      if (!mounted.current || request !== renameRequest.current) return;
+      setRenameError(error?.message || 'Couldn’t suggest filenames.');
+      setRenameStage('candidates');
+    } finally {
+      if (mounted.current && request === renameRequest.current) renameActive.current = false;
+    }
+  };
+
+  const useAiForNames = async (event) => {
+    if (renameLocalOnly || renameActive.current) return;
+    const selected = renamePendingAi.filter(row => renameAiChecked[row.id]).map(row => row.id);
+    if (!selected.length) return;
+    if (!hasAiConfig) { onOpenSettings('ai', event?.currentTarget); return; }
+    const request = ++renameRequest.current;
+    renameActive.current = true;
+    setRenameStage('generating');
+    setRenameProgress({ phase: 'ai' });
+    setRenameError('');
+    try {
+      const result = await api().namePreparedDocuments(path, selected, request);
+      if (!mounted.current || request !== renameRequest.current) return;
+      if (result?.cancelled) { setStatus('idle'); return; }
+      if (!result?.ok) throw new Error(result?.error || 'Couldn’t suggest filenames.');
+      const suggestions = result.suggestions || [];
+      setRenameSuggestions(suggestions);
+      setRenameChecked(Object.fromEntries(suggestions.map(row => [row.id, true])));
+      setRenameSkipped(previous => [...previous, ...(result.skipped || []), ...renamePendingAi.filter(row => !renameAiChecked[row.id]).map(row => ({ name: row.oldName, reason: 'Not selected for AI. Nothing was sent.' }))]);
+      setRenamePendingAi([]);
+      setRenameStage('review');
+    } catch (error) {
+      if (mounted.current && request === renameRequest.current) { setRenameError(error?.message || 'Couldn’t suggest filenames.'); setRenameStage('privacy'); }
+    } finally {
+      if (mounted.current && request === renameRequest.current) renameActive.current = false;
+    }
+  };
+
+  const reviewLocalNames = () => {
+    setRenameSkipped(previous => [...previous, ...renamePendingAi.map(row => ({ name: row.oldName, reason: 'Kept local. No clear heading was found.' }))]);
+    setRenamePendingAi([]);
+    setRenameStage('review');
+    setRenameError('');
+  };
+
+  const applyNames = async () => {
+    if (renameBusy) return;
+    const selected = renameSuggestions.filter(row => renameChecked[row.id]).map(row => ({ id: row.id, newName: row.newName }));
+    if (!selected.length) return;
+    setRenameBusy(true);
+    setRenameError('');
+    try {
+      const result = await api().applyRenames(path, selected);
+      if (!mounted.current) return;
+      if (!result?.ok) {
+        const errors = [result?.error || 'The names couldn’t be applied.', ...(result?.errors || []).slice(0, 3).map(error => typeof error === 'string' ? error : error.message || error.reason), ...(result?.rollbackErrors || []).slice(0, 3)];
+        if (result?.run) {
+          await Promise.all([loadHistory(), scanFolder({ silent: true })]);
+          if (!mounted.current) return;
+          setStatus('idle');
+          notify(`${pluralize(result.renamed || result.moves?.length || 0, 'file')} kept a new name because it couldn’t be restored. Use Undo to try restoring it. ${errors.slice(1, 2).join(' ')}`, { duration: 15000, action: { label: 'Undo', onClick: () => setConfirmUndo(result.run) } });
+        } else setRenameError(errors.filter(Boolean).join('\n'));
+        return;
+      }
+      await Promise.all([scanFolder({ silent: true }), loadHistory()]);
+      if (!mounted.current) return;
+      setStatus('idle');
+      notify(`Renamed ${pluralize(result.renamed || result.moves?.length || 0, 'file')}`, result.run ? { action: { label: 'Undo', onClick: () => setConfirmUndo(result.run) } } : {});
+    } catch (error) {
+      if (mounted.current) setRenameError(error?.message || 'Couldn’t rename files.');
+    } finally {
+      if (mounted.current) setRenameBusy(false);
+    }
+  };
+
+  // ---------------------------------------------------------------- render
+
+  const folderCount = files.filter((f) => f.type === 'folder').length;
+  const fileCount = files.length - folderCount;
+  const busy = ['scanning', 'analyzing', 'executing', 'reverting'].includes(status) || documentBusy || (status === 'deduping' && (dedupeLoading || dedupeBusy)) || (status === 'renaming' && (renameLoading || renameBusy || renameStage === 'generating'));
+  const streamBoost = Math.min(92, (aiStream.length / 6000) * 92);
+  const shownAnalysis = Math.max(analysisProgress, streamBoost);
+  const execPct = executeProgress.total ? (executeProgress.processed / executeProgress.total) * 100 : 0;
+
+  let panel;
+  switch (status) {
+    case 'versions':
+      panel = <VersionsPanel path={path} onCancel={() => setStatus('idle')} onChanged={() => scanFolder({ silent: true })} onBusyChange={setDocumentBusy} />;
+      break;
+    case 'search':
+      panel = <SearchPanel path={path} onCancel={() => setStatus('idle')} onBusyChange={setDocumentBusy} />;
+      break;
+    case 'presets':
+      panel = <PresetPanel path={path} onCancel={() => setStatus('idle')} onBusyChange={setDocumentBusy} onPreview={async result => {
+        await scanFolder({ silent: true });
+        if (!mounted.current) return;
+        setPlanSource('preset'); setPlan(normalizePlan(result.plan)); setExcluded([]); setAiStream(''); setStatus('reviewing');
+      }} />;
+      break;
+    case 'scanning':
+      panel = <ProgressPanel title="Reading folder" description="Listing files and peeking inside subfolders." />;
+      break;
+    case 'deduping':
+      panel = (
+        <DedupePanel
+          loading={dedupeLoading}
+          duplicates={duplicates}
+          checked={checkedDuplicates}
+          onToggle={toggleDuplicate}
+          progress={dedupeProgress}
+          stats={dedupeStats}
+          error={dedupeError}
+          busy={dedupeBusy}
+          rootPath={path}
+          onCancel={cancelDedupe}
+          onRetry={startDedupe}
+          onConfirm={confirmDedupe}
+        />
+      );
+      break;
+    case 'analyzing':
+      panel = (
+        <ProgressPanel
+          title="Planning your folder"
+          description="The AI is grouping items by type, name, and project markers."
+          progress={shownAnalysis}
+          detail={aiStream ? 'Receiving plan' : 'Waiting for the model'}
+          stream={aiStream}
+          action={{ label: 'Cancel', onClick: cancelAnalysis }}
+        />
+      );
+      break;
+    case 'renaming':
+      panel = <RenamePanel
+        stage={renameStage} loading={renameLoading} busy={renameBusy}
+        candidates={renameCandidates} suggestions={renameSuggestions} checked={renameChecked}
+        existingNames={files.map(file => file.name)}
+        pendingAi={renamePendingAi} aiChecked={renameAiChecked}
+        onAiToggle={(id, selected) => setRenameAiChecked(previous => id === null ? Object.fromEntries(renamePendingAi.map(row => [row.id, selected])) : { ...previous, [id]: !previous[id] })}
+        onUseAi={useAiForNames} onLocalReview={reviewLocalNames}
+        localOnly={renameLocalOnly} onLocalOnlyChange={setRenameLocalOnly} {...renameDestination}
+        error={renameError} skipped={renameSkipped} progress={renameProgress}
+        onToggle={(id, selected) => setRenameChecked(previous => id === null ? Object.fromEntries((renameStage === 'review' ? renameSuggestions : renameCandidates).map(row => [row.id, selected])) : { ...previous, [id]: !previous[id] })}
+        onEdit={(id, newName) => setRenameSuggestions(previous => previous.map(row => row.id === id ? { ...row, newName } : row))}
+        onSuggest={generateNames} onApply={applyNames} onCancel={cancelRename} onRetry={startRename}
+      />;
+      break;
+    case 'reviewing':
+      panel = plan && (
+        <ReviewPanel
+          files={files}
+          rootPath={path}
+          plan={plan}
+          setPlan={setPlan}
+          excluded={excluded}
+          setExcluded={setExcluded}
+          aiStream={aiStream}
+          source={planSource}
+          onCancel={() => { setPlan(null); setExcluded([]); setStatus(planSource === 'preset' ? 'presets' : 'idle'); }}
+          onApply={handleApply}
+          onRetry={planSource === 'preset' ? () => { setPlan(null); setStatus('presets'); } : () => runAnalysis({
+            retryReason: 'The user asked for a different plan. Propose a noticeably different, sensible grouping.',
+            previousPlan: plan,
+          })}
+        />
+      );
+      break;
+    case 'executing':
+      panel = (
+        <ProgressPanel
+          title="Moving items"
+          description="If any move fails, everything from this run is put back."
+          progress={execPct}
+          detail={executeProgress.current?.name ? truncateMiddle(executeProgress.current.name, 40, 20, 14) : `${executeProgress.moved} of ${executeProgress.total}`}
+        />
+      );
+      break;
+    case 'reverting':
+      panel = <ProgressPanel title="Undoing run" description="Putting every item back where it was." />;
+      break;
+    case 'complete':
+      panel = completion && (
+        <CompletePanel
+          {...completion}
+          busy={busy}
+          onUndo={() => setConfirmUndo(completion.run)}
+          onHistory={() => setHistoryOpen(true)}
+          onOpenFolder={() => api().openPath(path)}
+          onHome={onBack}
+        />
+      );
+      break;
+    default:
+      panel = (
+        <IdlePanel
+          files={files}
+          path={path}
+          hasAiConfig={hasAiConfig}
+          onOrganize={() => runAnalysis()}
+          onFindDuplicates={startDedupe}
+          onSmartRename={startRename}
+          onVersionGroups={() => setStatus('versions')}
+          onSearchDocuments={() => setStatus('search')}
+          onPresets={() => setStatus('presets')}
+          onOpenSettings={onOpenSettings}
+        />
+      );
+  }
 
   return (
-    <Fade in={true} timeout={400}>
-      <Box sx={{
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        bgcolor: 'background.default',
-        p: 3,
-        gap: 3
-      }}>
-        {/* Header - Refined & Clean */}
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: 0, flex: 1 }}>
-            {/* Back Button */}
-            <Tooltip title="Back to Home">
-              <IconButton
-                onClick={onBack}
-                sx={{
-                  bgcolor: 'background.surfaceContainer',
-                  border: '1px solid',
-                  borderColor: 'divider',
-                  '&:hover': { bgcolor: 'action.hover', borderColor: 'primary.main' }
-                }}
-              >
-                <ArrowBackIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', px: { xs: 2, sm: 3 }, pb: 2, gap: 2 }}>
+      <FolderHeader
+        path={path}
+        folderCount={folderCount}
+        fileCount={fileCount}
+        busy={busy}
+        historyCount={runs.length}
+        onBack={onBack}
+        onRefresh={() => scanFolder()}
+        onHistory={() => setHistoryOpen(true)}
+        onSettings={(event) => onOpenSettings('appearance', event.currentTarget)}
+      />
 
-            {/* Folder Info */}
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, minWidth: 0 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                <Typography variant="h4" fontWeight={700} noWrap>
-                  {folderName}
-                </Typography>
-                <Tooltip title={pathCopied ? "Copied!" : "Click to copy path"}>
-                  <Chip
-                    size="small"
-                    label={path}
-                    onClick={handleCopyPath}
-                    icon={<FolderOpenIcon sx={{ fontSize: 14 }} />}
-                    sx={{
-                      cursor: 'pointer',
-                      bgcolor: 'background.surfaceContainer',
-                      border: '1px solid',
-                      borderColor: pathCopied ? 'success.main' : 'divider',
-                      color: pathCopied ? 'success.main' : 'text.secondary',
-                      transition: 'all 0.2s',
-                      maxWidth: 400,
-                      '&:hover': {
-                        bgcolor: 'action.hover',
-                        borderColor: 'primary.main',
-                        color: 'primary.main'
-                      }
-                    }}
-                  />
-                </Tooltip>
-              </Box>
-
-              <Box sx={{ display: 'flex', gap: 2 }}>
-                <Typography variant="caption" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: 'text.secondary', fontWeight: 500 }}>
-                  <FolderIcon sx={{ fontSize: 14 }} /> {folderCount} folders
-                </Typography>
-                <Typography variant="caption" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: 'text.secondary', fontWeight: 500 }}>
-                  <InsertDriveFileIcon sx={{ fontSize: 14 }} /> {fileCount} files
-                </Typography>
-              </Box>
-            </Box>
-          </Box>
-
-          {/* Actions Toolbar */}
-          <Box sx={{ display: 'flex', gap: 1, bgcolor: 'background.surfaceContainer', p: 0.75, borderRadius: 3, border: '1px solid', borderColor: 'divider' }}>
-            <Tooltip title="Refresh">
-              <IconButton
-                onClick={scanFolder}
-                disabled={isBusy}
-                size="small"
-                sx={{ '&:hover': { color: 'primary.main' } }}
-              >
-                <RefreshIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title="History">
-              <IconButton onClick={() => setIsHistoryOpen(true)} size="small" sx={{ '&:hover': { color: 'primary.main' } }}>
-                <HistoryIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title="Settings">
-              <IconButton onClick={onOpenSettings} size="small" sx={{ '&:hover': { color: 'primary.main' } }}>
-                <SettingsIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-          </Box>
-        </Box>
-
-        {/* Content Area */}
-        <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-
-          {/* Scanning State */}
-          {status === 'scanning' && (
-            <Fade in={true} timeout={500}>
-              <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', pb: 8 }}>
-                <DashboardCard sx={{ width: '100%', maxWidth: 600, height: 'auto', minHeight: 360, display: 'flex', flexDirection: 'column' }}>
-                  <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, py: 6 }}>
-                    <Box sx={{ position: 'relative' }}>
-                      <CircularProgress size={80} thickness={3} sx={{ color: 'primary.main' }} />
-                      <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <FolderOpenIcon sx={{ fontSize: 32, color: 'primary.main' }} />
-                      </Box>
-                    </Box>
-                    <Box sx={{ textAlign: 'center' }}>
-                      <Typography variant="h5" fontWeight={700} gutterBottom>Scanning Folder</Typography>
-                      <Typography variant="body1" color="text.secondary">Reading file structure...</Typography>
-                    </Box>
-                  </Box>
-                </DashboardCard>
-              </Box>
-            </Fade>
-          )}
-
-          {/* Idle State - File Explorer & Action */}
-          {status === 'idle' && (
-            <Fade in={true} timeout={500}>
-              <Box sx={{ height: '100%', display: 'grid', gridTemplateRows: '1fr auto', gap: 3 }}>
-                <DashboardCard title="Folder Contents" icon={<FolderIcon />} color={theme.palette.primary.main}>
-                  <Box sx={{ flex: 1, overflow: 'auto', mt: 1 }}>
-                    <FileExplorer files={files} rootPath={path} />
-                  </Box>
-                </DashboardCard>
-
-                <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 2, alignItems: 'center' }}>
-                  <AnimatePresence mode="wait">
-                    {!isToolsExpanded ? (
-                      <motion.div
-                        key="tools-btn"
-                        initial={{ opacity: 0, scale: 0.95 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.95 }}
-                        transition={{ duration: 0.2 }}
-                      >
-                        <Button
-                          variant="outlined"
-                          onClick={() => setIsToolsExpanded(true)}
-                          disabled={files.length === 0}
-                          startIcon={<TipsAndUpdatesIcon />}
-                          sx={{
-                            fontSize: '1.1rem',
-                            py: 1.5,
-                            px: 3,
-                            borderRadius: 4,
-                            textTransform: 'none',
-                            fontWeight: 700,
-                            borderColor: 'divider',
-                            color: 'text.primary',
-                            '&:hover': {
-                              borderColor: theme.palette.primary.main,
-                              bgcolor: 'action.hover',
-                              transform: 'translateY(-2px)'
-                            },
-                            transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
-                            height: 52
-                          }}
-                        >
-                          Tools
-                        </Button>
-                      </motion.div>
-                    ) : (
-                      <motion.div
-                        key="tools-expanded"
-                        initial={{ opacity: 0, width: 90 }}
-                        animate={{ opacity: 1, width: 'auto' }}
-                        exit={{ opacity: 0, width: 90 }}
-                        transition={{ duration: 0.3, ease: 'easeOut' }}
-                        style={{ overflow: 'hidden' }}
-                      >
-                        <Box sx={{
-                          display: 'flex', gap: 1, alignItems: 'center', bgcolor: 'background.surfaceContainerHigh',
-                          px: 1, borderRadius: 4, border: '1px solid', borderColor: 'divider', height: 52,
-                          boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
-                        }}>
-                          <Box
-                            onMouseEnter={(e) => e.currentTarget.setAttribute('data-hover', 'true')}
-                            onMouseLeave={(e) => e.currentTarget.removeAttribute('data-hover')}
-                            sx={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              height: 40,
-                              borderRadius: 3,
-                              bgcolor: dedupeBeforeOrganize ? 'primary.main' : 'transparent',
-                              color: dedupeBeforeOrganize ? 'primary.contrastText' : 'text.primary',
-                              transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
-                              overflow: 'hidden',
-                              '&:hover': {
-                                bgcolor: dedupeBeforeOrganize ? 'primary.main' : 'action.hover',
-                              },
-                              '&[data-hover="true"] .subfolder-options': {
-                                maxWidth: 160,
-                                opacity: 1,
-                                pr: 1.5,
-                              }
-                            }}
-                          >
-                            <Button
-                              color="inherit"
-                              onClick={() => setDedupeBeforeOrganize(!dedupeBeforeOrganize)}
-                              startIcon={<AutoAwesomeIcon sx={{ color: dedupeBeforeOrganize ? 'inherit' : 'primary.main', mb: '2px' }} />}
-                              sx={{ height: '100%', px: 2, borderRadius: 3, textTransform: 'none', fontWeight: dedupeBeforeOrganize ? 700 : 600 }}
-                            >
-                              Dedupe
-                            </Button>
-
-                            <Box
-                              className="subfolder-options"
-                              sx={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                maxWidth: 0,
-                                opacity: 0,
-                                pr: 0,
-                                transition: 'all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
-                                overflow: 'hidden',
-                                whiteSpace: 'nowrap'
-                              }}
-                            >
-                              <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 1, borderColor: dedupeBeforeOrganize ? 'primary.contrastText' : 'divider', opacity: 0.5 }} />
-                              <FormControlLabel
-                                control={
-                                  <Checkbox
-                                    checked={dedupeRecursive}
-                                    onChange={(e) => setDedupeRecursive(e.target.checked)}
-                                    size="small"
-                                    sx={{
-                                      color: dedupeBeforeOrganize ? 'primary.contrastText' : 'text.secondary',
-                                      '&.Mui-checked': { color: dedupeBeforeOrganize ? 'primary.contrastText' : 'primary.main' },
-                                      py: 0.5
-                                    }}
-                                  />
-                                }
-                                label={<Typography variant="caption" sx={{ userSelect: 'none' }}>+ Subfolders</Typography>}
-                                sx={{ m: 0, ml: 0.5 }}
-                              />
-                            </Box>
-                          </Box>
-
-                          <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 1.5 }} />
-                          <Tooltip title="Close Tools Options">
-                            <IconButton onClick={() => setIsToolsExpanded(false)} size="small" sx={{ mr: 0.5, '&:hover': { color: 'error.main', bgcolor: 'error.main' + '15' } }}>
-                              <CloseIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                        </Box>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-
-                  <Button
-                    variant="contained"
-                    onClick={handlePrimaryOrganize}
-                    disabled={files.length === 0}
-                    startIcon={<AutoAwesomeIcon />}
-                    sx={{
-                      fontSize: '1.1rem',
-                      py: 1.5,
-                      px: 4,
-                      borderRadius: 4,
-                      height: 52,
-                      textTransform: 'none',
-                      fontWeight: 700,
-                      boxShadow: `0 8px 25px ${theme.palette.primary.main}50`,
-                      '&:hover': {
-                        boxShadow: `0 12px 35px ${theme.palette.primary.main}70`,
-                        transform: 'translateY(-2px)'
-                      },
-                      transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)'
-                    }}
-                  >
-                    Organize with AI
-                  </Button>
-                </Box>
-              </Box>
-            </Fade>
-          )}
-
-          {/* Deduping State */}
-          {status === 'deduping' && (
-            <Fade in={true} timeout={500}>
-              <Box sx={{ flex: 1, display: 'grid', gridTemplateRows: 'auto 1fr auto', overflow: 'hidden' }}>
-                <DashboardCard
-                  title={
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                      <Chip label="Step 1" color="primary" size="small" sx={{ fontWeight: 800, height: 26, fontSize: '0.75rem', borderRadius: 2 }} />
-                      <Typography variant="h6" fontWeight={700}>Validate Duplicates</Typography>
-                    </Box>
-                  }
-                  icon={<AutoAwesomeIcon />}
-                  color={theme.palette.primary.main}
-                  sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}
-                  headerAction={
-                    <Box sx={{ display: 'flex', gap: 1 }}>
-                      <Button onClick={handleDedupeCancel} color="inherit" disabled={isDeduping}>
-                        Cancel
-                      </Button>
-                      <Button
-                        onClick={handleDeleteDuplicates}
-                        disabled={(Object.keys(checkedDuplicates).length === 0 && !autoOrganizeAfterDedupe) || isDeduping}
-                        variant="contained"
-                        color={Object.keys(checkedDuplicates).length === 0 && autoOrganizeAfterDedupe ? "primary" : "error"}
-                        startIcon={Object.keys(checkedDuplicates).length === 0 && autoOrganizeAfterDedupe ? undefined : <DeleteIcon />}
-                        sx={{ borderRadius: 4, px: 3, fontWeight: 700 }}
-                      >
-                        {isDeduping
-                          ? 'Processing...'
-                          : Object.keys(checkedDuplicates).length === 0 && autoOrganizeAfterDedupe
-                            ? 'Skip & Organize'
-                            : `Remove ${Object.keys(checkedDuplicates).length} Duplicates`
-                        }
-                      </Button>
-                    </Box>
-                  }
-                >
-                  <Box sx={{ flex: 1, overflow: 'auto', mt: 1, pr: 1 }}>
-                    {isDeduping && !duplicates.length ? (
-                      <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', p: 4, gap: 3 }}>
-                        <CircularProgress size={50} thickness={4} />
-                        <Typography variant="h6" color="text.secondary">Scanning for duplicates...</Typography>
-                      </Box>
-                    ) : duplicates.length === 0 ? (
-                      <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', p: 4, gap: 2 }}>
-                        <Box sx={{ width: 80, height: 80, borderRadius: '50%', bgcolor: 'success.main' + '15', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <CheckCircleIcon sx={{ fontSize: 40, color: 'success.main' }} />
-                        </Box>
-                        <Box textAlign="center">
-                          <Typography variant="h5" fontWeight={700}>No duplicates found</Typography>
-                          <Typography variant="body1" color="text.secondary" sx={{ mt: 1 }}>Your folder is clean.</Typography>
-                        </Box>
-                      </Box>
-                    ) : (
-                      <List disablePadding sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        {duplicates.map((group, gIdx) => (
-                          <Paper key={gIdx} elevation={0} sx={{
-                            border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden',
-                            bgcolor: 'background.paper'
-                          }}>
-                            <Box sx={{ px: 2, py: 1.5, bgcolor: 'background.surfaceContainer', borderBottom: '1px solid', borderColor: 'divider' }}>
-                              <Typography variant="body2" color="text.primary" fontWeight={700}>
-                                Group {gIdx + 1} • {formatBytes(group.size)}
-                              </Typography>
-                            </Box>
-                            {group.files.map((file, fIdx) => {
-                              const isChecked = !!checkedDuplicates[`${gIdx}-${fIdx}`];
-                              return (
-                                <ListItem key={fIdx} sx={{ px: 2, py: 1.5, borderBottom: fIdx < group.files.length - 1 ? '1px solid' : 'none', borderColor: 'divider' }} disablePadding>
-                                  <FormControlLabel
-                                    sx={{ width: '100%', m: 0 }}
-                                    control={
-                                      <Checkbox
-                                        checked={isChecked}
-                                        onChange={() => handleToggleDuplicate(gIdx, fIdx, file)}
-                                        color="error"
-                                        sx={{ p: 1, mr: 1, '&.Mui-checked': { color: 'error.main' } }}
-                                      />
-                                    }
-                                    label={
-                                      <Box sx={{ display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
-                                        <Typography variant="body1" fontWeight={isChecked ? 400 : 600} noWrap sx={{ textDecoration: isChecked ? 'line-through' : 'none', color: isChecked ? 'text.secondary' : 'text.primary' }}>
-                                          {file.split(/[/\\]/).pop()}
-                                        </Typography>
-                                        <Typography variant="caption" color="text.secondary" noWrap sx={{ opacity: 0.7 }}>
-                                          {file}
-                                        </Typography>
-                                      </Box>
-                                    }
-                                  />
-                                  {fIdx === 0 && <Chip label="Original" size="small" color="primary" sx={{ ml: 1, height: 22, fontSize: '0.7rem', fontWeight: 600 }} />}
-                                </ListItem>
-                              );
-                            })}
-                          </Paper>
-                        ))}
-                      </List>
-                    )}
-                  </Box>
-                </DashboardCard>
-              </Box>
-            </Fade>
-          )}
-
-          {/* Analyzing State */}
-          {status === 'analyzing' && (
-            <Fade in={true} timeout={500}>
-              <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', pb: 8 }}>
-                <DashboardCard
-                  color={theme.palette.secondary.main}
-                  sx={{
-                    width: '100%',
-                    maxWidth: 640,
-                    height: 'auto',
-                    minHeight: 400,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    border: 'none',
-                    boxShadow: 'none',
-                    bgcolor: 'transparent',
-                    '&:hover': {
-                      borderColor: 'transparent',
-                      boxShadow: 'none',
-                      cursor: 'default'
-                    }
-                  }}
-                >
-                  <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 5, py: 6 }}>
-                    <Box sx={{ position: 'relative', display: 'inline-flex' }}>
-                      {/* Pulping Effect */}
-                      <Box sx={{
-                        position: 'absolute', inset: -24, borderRadius: '50%',
-                        bgcolor: theme.palette.secondary.main + '20',
-                        animation: 'pulse 2s infinite'
-                      }} />
-                      <CircularProgress
-                        size={90}
-                        thickness={3}
-                        variant="indeterminate"
-                        sx={{ color: 'secondary.main' }}
-                      />
-                      <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <AutoAwesomeIcon sx={{ fontSize: 36, color: 'secondary.main' }} />
-                      </Box>
-                    </Box>
-                    <Box sx={{ textAlign: 'center', width: '100%', maxWidth: 460, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                      <Box sx={{ mb: 1 }}>
-                        <Chip label={autoOrganizeAfterDedupe ? "Step 2" : "Analysis"} color="secondary" size="small" sx={{ fontWeight: 800, height: 26, fontSize: '0.75rem', borderRadius: 2, mb: 2 }} />
-                      </Box>
-                      <Typography variant="h4" fontWeight={800} gutterBottom>Analyzing Files</Typography>
-                      <Typography variant="body1" color="text.secondary" paragraph sx={{ fontSize: '1.1rem' }}>
-                        AI is determining the optimal structure based on file types, names, and content.
-                      </Typography>
-                      <Box sx={{ mt: 2.5, width: '100%', maxWidth: 420, mx: 'auto' }}>
-                        <LinearProgress
-                          variant="determinate"
-                          value={analyzeProgress}
-                          sx={{
-                            height: 10,
-                            borderRadius: 6,
-                            bgcolor: 'action.hover',
-                            '& .MuiLinearProgress-bar': {
-                              bgcolor: 'secondary.main'
-                            }
-                          }}
-                        />
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                          {analyzeProgress}% complete
-                        </Typography>
-                      </Box>
-                    </Box>
-                  </Box>
-                </DashboardCard>
-              </Box>
-            </Fade>
-          )}
-
-          {/* Reviewing State - Organization Plan */}
-          {status === 'reviewing' && plan && (
-            <Fade in={true} timeout={500}>
-              <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <DashboardCard title="Organization Plan" icon={<TipsAndUpdatesIcon />} color={theme.palette.info.main}
-                  headerAction={
-                    <Box sx={{ display: 'flex', gap: 1 }}>
-                      <Button onClick={handleCancelReview} color="inherit" sx={{ color: 'text.secondary' }}>Cancel</Button>
-                      <Button variant="contained" color="success" startIcon={<CheckCircleIcon />} onClick={handleApply} sx={{ borderRadius: 4, px: 3 }}>
-                        Apply Changes
-                      </Button>
-                    </Box>
-                  }
-                >
-                  <Box sx={{ flex: 1, overflow: 'auto', mt: 1 }}>
-                    <DnDOrganizer plan={plan} setPlan={setPlan} />
-                  </Box>
-                  <Box sx={{ mt: 2 }}>
-                    <Button
-                      variant="outlined"
-                      size="small"
-                      startIcon={<AutoAwesomeIcon />}
-                      onClick={() => setShowAiOutput((prev) => !prev)}
-                      sx={{ borderRadius: 3, textTransform: 'none', fontWeight: 600 }}
-                    >
-                      {showAiOutput ? 'Hide AI Output' : 'Show AI Output'}
-                    </Button>
-                    {showAiOutput && (
-                      <Paper elevation={0} sx={{
-                        mt: 2,
-                        bgcolor: 'background.surfaceContainer',
-                        border: '1px solid',
-                        borderColor: 'divider',
-                        borderRadius: 3,
-                        p: 2,
-                        maxHeight: 220,
-                        overflow: 'auto'
-                      }}>
-                        <Typography variant="caption" color="text.secondary" fontWeight={700} sx={{ display: 'block', mb: 1 }}>
-                          AI output
-                        </Typography>
-                        {aiStream.trim().length > 0 ? (
-                          <Typography
-                            component="pre"
-                            variant="caption"
-                            sx={{
-                              m: 0,
-                              whiteSpace: 'pre-wrap',
-                              wordBreak: 'break-word',
-                              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                              fontSize: '0.75rem',
-                              lineHeight: 1.4,
-                              color: 'text.primary',
-                              opacity: 0.9
-                            }}
-                          >
-                            {aiStream}
-                          </Typography>
-                        ) : (
-                          <Typography variant="caption" color="text.secondary">
-                            No AI output captured for this run.
-                          </Typography>
-                        )}
-                      </Paper>
-                    )}
-                  </Box>
-                </DashboardCard>
-              </Box>
-            </Fade>
-          )}
-
-          {/* Executing State */}
-          {status === 'executing' && (
-            <Fade in={true} timeout={500}>
-              <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', pb: 8 }}>
-                <DashboardCard color={theme.palette.success.main} sx={{ width: '100%', maxWidth: 600, height: 'auto', minHeight: 360, display: 'flex', flexDirection: 'column' }}>
-                  <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, py: 6 }}>
-                    <Box sx={{ position: 'relative', display: 'inline-flex' }}>
-                      <Box sx={{
-                        position: 'absolute', inset: -16, borderRadius: '50%',
-                        bgcolor: theme.palette.success.main + '20',
-                        animation: 'pulse 1.5s infinite'
-                      }} />
-                      <CircularProgress size={80} thickness={3} sx={{ color: 'success.main' }} />
-                      <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <CheckCircleIcon sx={{ fontSize: 32, color: 'success.main' }} />
-                      </Box>
-                    </Box>
-                    <Box sx={{ textAlign: 'center' }}>
-                      <Typography variant="h5" fontWeight={700} gutterBottom>Moving Files</Typography>
-                      <Typography variant="body1" color="text.secondary">
-                        Applying your organization plan...
-                      </Typography>
-                      <Box sx={{ mt: 3, width: '100%', maxWidth: 420 }}>
-                        <LinearProgress
-                          variant={executeProgress.total > 0 ? 'determinate' : 'indeterminate'}
-                          value={executeProgress.total > 0 ? (executeProgress.processed / executeProgress.total) * 100 : 0}
-                          sx={{
-                            height: 8,
-                            borderRadius: 4,
-                            bgcolor: 'action.hover',
-                            '& .MuiLinearProgress-bar': { bgcolor: 'success.main' }
-                          }}
-                        />
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                          {executeProgress.moved} moved / {executeProgress.total} planned
-                        </Typography>
-                        {executeProgress.current?.name && (
-                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5, opacity: 0.75 }}>
-                            Current: {truncateMiddle(executeProgress.current.name, 40, 16, 16)}
-                          </Typography>
-                        )}
-                      </Box>
-                    </Box>
-                  </Box>
-                </DashboardCard>
-              </Box>
-            </Fade>
-          )}
-
-          {/* Reverting State */}
-          {status === 'reverting' && (
-            <Fade in={true} timeout={500}>
-              <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', pb: 8 }}>
-                <DashboardCard color={theme.palette.warning.main} sx={{ width: '100%', maxWidth: 600, height: 'auto', minHeight: 360, display: 'flex', flexDirection: 'column' }}>
-                  <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, py: 6 }}>
-                    <Box sx={{ position: 'relative', display: 'inline-flex' }}>
-                      <Box sx={{
-                        position: 'absolute', inset: -16, borderRadius: '50%',
-                        bgcolor: theme.palette.warning.main + '20',
-                        animation: 'pulse 1.5s infinite'
-                      }} />
-                      <CircularProgress size={80} thickness={3} sx={{ color: 'warning.main' }} />
-                      <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <RefreshIcon sx={{ fontSize: 32, color: 'warning.main' }} />
-                      </Box>
-                    </Box>
-                    <Box sx={{ textAlign: 'center' }}>
-                      <Typography variant="h5" fontWeight={700} gutterBottom>Reverting Changes</Typography>
-                      <Typography variant="body1" color="text.secondary">
-                        Restoring files from the last run...
-                      </Typography>
-                      <Box sx={{ mt: 3, width: '100%', maxWidth: 420 }}>
-                        <LinearProgress
-                          variant="indeterminate"
-                          sx={{
-                            height: 8,
-                            borderRadius: 4,
-                            bgcolor: 'action.hover',
-                            '& .MuiLinearProgress-bar': { bgcolor: 'warning.main' }
-                          }}
-                        />
-                      </Box>
-                    </Box>
-                  </Box>
-                </DashboardCard>
-              </Box>
-            </Fade>
-          )}
-
-          {/* Complete State - Dashboard Grid */}
-          {status === 'complete' && completionStats && (
-            <Fade in={true} timeout={500}>
-              <Box sx={{
-                height: '100%',
-                display: 'grid',
-                overflow: 'auto',
-                gap: { xs: 2, md: 2.5 },
-                gridTemplateColumns: {
-                  xs: 'minmax(0, 1fr)',
-                  sm: 'minmax(0, 1fr) minmax(0, 1fr)',
-                  lg: 'minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)',
-                },
-                gridTemplateRows: {
-                  xs: 'auto',
-                  lg: 'auto auto minmax(0, 1fr)',
-                },
-                gridTemplateAreas: {
-                  xs: `
-                    "hero"
-                    "statCategories"
-                    "statFiles"
-                    "statFolders"
-                    "breakdown"
-                    "actions"
-                  `,
-                  sm: `
-                    "hero hero"
-                    "statCategories statFiles"
-                    "statFolders statFolders"
-                    "breakdown breakdown"
-                    "actions actions"
-                  `,
-                  lg: `
-                    "hero hero hero"
-                    "statCategories statFiles statFolders"
-                    "breakdown breakdown actions"
-                  `,
-                },
-                alignContent: 'start',
-                '& > *': { minWidth: 0, minHeight: 0 },
-              }}>
-
-                {/* Header Banner */}
-                <DashboardCard
-                  color={theme.palette.success.main}
-                  sx={{ gridArea: 'hero', minHeight: { xs: 110, md: 96 } }}
-                >
-                  <Box sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 2.5,
-                    flexWrap: 'wrap',
-                  }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2.5, minWidth: 0 }}>
-                      <Box sx={{
-                        width: 56,
-                        height: 56,
-                        borderRadius: '50%',
-                        bgcolor: 'success.light',
-                        color: 'success.dark',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        flexShrink: 0,
-                      }}>
-                        <CheckCircleIcon sx={{ fontSize: 32 }} />
-                      </Box>
-                      <Box sx={{ minWidth: 0 }}>
-                        <Typography variant="h5" fontWeight={800} gutterBottom sx={{ lineHeight: 1.1 }}>
-                          Organization complete
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary" fontWeight={500}>
-                          Successfully processed {completionStats.totalItems} items.
-                        </Typography>
-                      </Box>
-                    </Box>
-
-                    <Box sx={{
-                      display: 'flex',
-                      gap: 1,
-                      flexWrap: 'wrap',
-                      justifyContent: { xs: 'flex-start', sm: 'flex-end' },
-                      flex: 1,
-                    }}>
-                      <Chip
-                        size="small"
-                        label={`${completionStats.totalItems} items`}
-                        sx={{ bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', fontWeight: 700 }}
-                      />
-                      <Chip
-                        size="small"
-                        label={`${formatBytes(completionStats.totalBytes)} processed`}
-                        sx={{ bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', fontWeight: 700 }}
-                      />
-                      <Chip
-                        size="small"
-                        label={`${completionStats.categoriesCreated} categories`}
-                        sx={{ bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', fontWeight: 700 }}
-                      />
-                    </Box>
-                  </Box>
-                </DashboardCard>
-
-                {/* Stat Cards */}
-                <DashboardCard
-                  title="Categories"
-                  icon={<FolderIcon />}
-                  color={theme.palette.primary.main}
-                  sx={{ gridArea: 'statCategories', minHeight: 160 }}
-                >
-                  <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', mt: 1 }}>
-                    <Typography variant="h3" fontWeight={800}>{completionStats.categoriesCreated}</Typography>
-                    <Box>
-                      <Typography variant="body2" color="text.secondary" fontWeight={600}>Created</Typography>
-                      <Typography variant="caption" color="primary.main" fontWeight={500} sx={{ display: 'block', mt: 0.5 }}>
-                        Top: {completionStats.topCategoryName}
-                      </Typography>
-                    </Box>
-                  </Box>
-                </DashboardCard>
-
-                <DashboardCard
-                  title="Files Moved"
-                  icon={<InsertDriveFileIcon />}
-                  color={theme.palette.secondary.main}
-                  sx={{ gridArea: 'statFiles', minHeight: 160 }}
-                >
-                  <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', mt: 1 }}>
-                    <Typography variant="h3" fontWeight={800}>{completionStats.filesMoved}</Typography>
-                    <Box>
-                      <Typography variant="body2" color="text.secondary" fontWeight={600}>Total Files</Typography>
-                      <Typography variant="caption" color="secondary.main" fontWeight={500} sx={{ display: 'block', mt: 0.5 }}>
-                        {formatBytes(completionStats.totalBytes)} Processed
-                      </Typography>
-                    </Box>
-                  </Box>
-                </DashboardCard>
-
-                <DashboardCard
-                  title="Folders Moved"
-                  icon={<FolderOpenIcon />}
-                  color={theme.palette.warning.main}
-                  sx={{ gridArea: 'statFolders', minHeight: 160 }}
-                >
-                  <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', mt: 1 }}>
-                    <Typography variant="h3" fontWeight={800}>{completionStats.foldersMoved}</Typography>
-                    <Box>
-                      <Typography variant="body2" color="text.secondary" fontWeight={600}>Folders</Typography>
-                      <Typography variant="caption" color="warning.main" fontWeight={500} sx={{ display: 'block', mt: 0.5 }}>
-                        Structure Cleaned
-                      </Typography>
-                    </Box>
-                  </Box>
-                </DashboardCard>
-
-                {/* Details */}
-                <DashboardCard
-                  title="Breakdown"
-                  icon={<TipsAndUpdatesIcon />}
-                  color={theme.palette.info.main}
-                  sx={{
-                    gridArea: 'breakdown',
-                    minHeight: { xs: 240, lg: 0 },
-                    height: { lg: '100%' },
-                  }}
-                >
-                  <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                    <Typography variant="body2" color="text.secondary" fontWeight={500}>
-                      Recollection of moved items
-                    </Typography>
-                    <Box sx={{
-                      flex: 1,
-                      mt: 1.5,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 1,
-                      overflow: 'auto',
-                      pr: 0.5,
-                    }}>
-                      {displayedMoveRecap.length > 0 ? displayedMoveRecap.map((entry) => (
-                        <Box
-                          key={entry.id}
-                          sx={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            gap: 1,
-                            p: 1,
-                            borderRadius: 2,
-                            border: '1px solid',
-                            borderColor: 'divider',
-                            bgcolor: 'background.paper',
-                            minWidth: 0,
-                          }}
-                        >
-                          <Typography variant="body2" fontWeight={600} sx={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {truncateMiddle(entry.name, 44, 18, 18)}
-                          </Typography>
-                          <Chip
-                            size="small"
-                            label={entry.category}
-                            variant="outlined"
-                            sx={{ flexShrink: 0, borderColor: 'divider' }}
-                          />
-                        </Box>
-                      )) : (
-                        <Typography variant="caption" color="text.secondary">
-                          No moved-item details available.
-                        </Typography>
-                      )}
-                      {remainingMoveRecap > 0 && (
-                        <Typography variant="caption" color="text.secondary" sx={{ opacity: 0.8 }}>
-                          +{remainingMoveRecap} more moved items
-                        </Typography>
-                      )}
-                    </Box>
-                  </Box>
-                </DashboardCard>
-
-                {/* Actions */}
-                <DashboardCard
-                  title="Next steps"
-                  icon={<CheckCircleIcon />}
-                  color={theme.palette.success.main}
-                  sx={{
-                    gridArea: 'actions',
-                    minHeight: { xs: 220, lg: 0 },
-                    height: { lg: '100%' },
-                  }}
-                >
-                  <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                    <Typography variant="body2" color="text.secondary" fontWeight={500}>
-                      Review your results, or undo this run if something looks off.
-                    </Typography>
-
-                    {lastRunId && (
-                      <Button
-                        variant="outlined"
-                        fullWidth
-                        startIcon={<RefreshIcon />}
-                        onClick={() => handleRevertRun(lastRunId)}
-                        disabled={!lastRunId || lastRun?.revertedAt || isBusy}
-                        sx={{ borderRadius: 4, border: '1px solid', borderColor: 'divider', py: 1.5 }}
-                      >
-                        {lastRun?.revertedAt ? 'Already Reverted' : 'Revert Last Run'}
-                      </Button>
-                    )}
-
-                    <Button
-                      variant="outlined"
-                      fullWidth
-                      startIcon={<HistoryIcon />}
-                      onClick={() => setIsHistoryOpen(true)}
-                      sx={{ borderRadius: 4, border: '1px solid', borderColor: 'divider', py: 1.5 }}
-                    >
-                      History
-                    </Button>
-
-                    <Button
-                      variant="contained"
-                      fullWidth
-                      onClick={onBack}
-                      sx={{
-                        mt: 'auto',
-                        borderRadius: 4,
-                        bgcolor: 'primary.main',
-                        fontSize: '1.05rem',
-                        fontWeight: 800,
-                        py: 1.7,
-                      }}
-                    >
-                      Back to Home
-                    </Button>
-                  </Box>
-                </DashboardCard>
-              </Box>
-            </Fade>
-          )}
-
-          {/* Plan Validation / Execution Errors */}
-          <Dialog
-            open={planIssue.open}
-            onClose={() => setPlanIssue({ open: false, title: '', message: '', details: [], retryContext: null })}
-            maxWidth="sm"
-            fullWidth
+      <Box sx={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex', flexDirection: 'column' }}>
+        <AnimatePresence mode="wait" initial={false}>
+          <m.div
+            key={status === 'deduping' && dedupeLoading ? 'dedupe-loading' : status}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0, transition: { y: springs.defaultSpatial, opacity: springs.defaultEffects } }}
+            exit={{ opacity: 0, transition: { opacity: springs.fastEffects } }}
+            style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
           >
-            <DialogTitle sx={{ fontWeight: 800 }}>{planIssue.title || 'Issue'}</DialogTitle>
-            <DialogContent dividers>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                {planIssue.message}
-              </Typography>
-              {Array.isArray(planIssue.details) && planIssue.details.length > 0 && (
-                <Box sx={{
-                  bgcolor: 'background.surfaceContainer',
-                  border: '1px solid',
-                  borderColor: 'divider',
-                  borderRadius: 2,
-                  p: 2
-                }}>
-                  {planIssue.details.slice(0, 8).map((line, idx) => (
-                    <Typography key={idx} variant="caption" sx={{ display: 'block', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace' }}>
-                      {line}
-                    </Typography>
-                  ))}
-                  {planIssue.details.length > 8 && (
-                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                      +{planIssue.details.length - 8} more
-                    </Typography>
-                  )}
-                </Box>
-              )}
-            </DialogContent>
-            <DialogActions sx={{ p: 2 }}>
-              <Button
-                onClick={() => setPlanIssue({ open: false, title: '', message: '', details: [], retryContext: null })}
-                color="inherit"
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="contained"
-                onClick={() => {
-                  const ctx = planIssue.retryContext;
-                  retryAnalyze(ctx?.retryReason || 'Unknown issue', ctx?.previousPlan || plan);
-                }}
-                disabled={!planIssue.retryContext}
-                sx={{ fontWeight: 800 }}
-              >
-                Retry With AI
-              </Button>
-            </DialogActions>
-          </Dialog>
-
-          {/* History Drawer */}
-          < Drawer
-            anchor="right"
-            open={isHistoryOpen}
-            onClose={() => setIsHistoryOpen(false)}
-            PaperProps={{
-              sx: {
-                width: 380,
-                bgcolor: 'background.surfaceContainer',
-              }
-            }}
-          >
-            <Box sx={{ p: 3 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Typography variant="h6">Recent Runs</Typography>
-                <IconButton onClick={() => setIsHistoryOpen(false)} size="small">
-                  <CloseIcon />
-                </IconButton>
-              </Box>
-              <Divider sx={{ mb: 2 }} />
-
-              {history.length > 0 ? (
-                <List disablePadding>
-                  {history.slice(0, 20).map((run, index) => (
-                    <ListItem
-                      key={index}
-                      sx={{
-                        px: 2,
-                        py: 1.5,
-                        mb: 1,
-                        bgcolor: 'background.paper',
-                        borderRadius: 2,
-                        border: '1px solid',
-                        borderColor: 'divider'
-                      }}
-                    >
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, width: '100%' }}>
-                        <ListItemIcon sx={{ minWidth: 36 }}>
-                          <HistoryIcon fontSize="small" color="action" />
-                        </ListItemIcon>
-                        <Box sx={{ flex: 1, minWidth: 0 }}>
-                          <Typography variant="body2" fontWeight={600} noWrap>
-                            {formatRunFolder(run?.dirPath)} • {formatRunTimestamp(run?.timestamp)}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                            {(run?.moved ?? run?.moves?.length ?? 0)} items • {(run?.categories?.length ?? 0)} categories
-                            {run?.warnings ? ` • ${run.warnings} warnings` : ''}
-                          </Typography>
-                        </Box>
-                        {run?.revertedAt ? (
-                          <Chip label="Reverted" size="small" color="default" />
-                        ) : (
-                          <Button
-                            variant="outlined"
-                            size="small"
-                            onClick={() => handleRevertRun(run?.id)}
-                            disabled={!run?.id || isBusy}
-                            sx={{ borderRadius: 3 }}
-                          >
-                            Revert
-                          </Button>
-                        )}
-                      </Box>
-                    </ListItem>
-                  ))}
-                </List>
-              ) : (
-                <Box sx={{
-                  py: 8,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  color: 'text.disabled'
-                }}>
-                  <HistoryIcon sx={{ fontSize: 48, mb: 2 }} />
-                  <Typography variant="body2">No runs yet</Typography>
-                </Box>
-              )}
-            </Box>
-          </Drawer >
-
-          {/* Notification */}
-          < Snackbar
-            open={notification.open}
-            autoHideDuration={6000}
-            onClose={() => setNotification({ ...notification, open: false })}
-            anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-          >
-            <Alert
-              severity={notification.severity}
-              onClose={() => setNotification({ ...notification, open: false })}
-              sx={{ borderRadius: 2 }}
-            >
-              {notification.message}
-            </Alert>
-          </Snackbar>
-
-        </Box>
+            {panel}
+          </m.div>
+        </AnimatePresence>
       </Box>
-    </Fade>
-  );
-}
 
-function DashboardCard({ title, icon, color, children, headerAction, elevation = 0, onClick, sx = {} }) {
-  // Common visual consistency
-  const CardContentWrapper = onClick ? CardActionArea : Box;
-  const wrapperProps = onClick ? { onClick, sx: { height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'stretch' } } : { sx: { height: '100%', display: 'flex', flexDirection: 'column' } };
+      <PlanIssueDialog
+        issue={planIssue}
+        onClose={() => setPlanIssue(EMPTY_ISSUE)}
+        onRetry={() => runAnalysis(planIssue.retryContext || {})}
+      />
 
-  return (
-    <Card
-      elevation={elevation}
-      sx={{
-        bgcolor: 'background.surfaceContainer',
-        border: '1px solid',
-        borderColor: 'divider',
-        borderRadius: '24px',
-        position: 'relative',
-        overflow: 'hidden',
-        transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-        '&:hover': {
-          borderColor: color ? color : 'divider',
-          boxShadow: color ? `0 12px 30px -10px ${color}30` : undefined,
-          cursor: onClick ? 'pointer' : 'default',
-          '& .icon-box-inner': {
-            transform: 'scale(1.1)',
-            color: color || 'text.primary'
-          }
-        },
-        ...sx
-      }}
-    >
-      <CardContentWrapper {...wrapperProps}>
-        <Box sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column', zIndex: 1, flex: 1 }}>
-          {/* Unified Header: Icon (Left) --- Action (Right) */}
-          {(icon || title || headerAction) && (
-            <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: children ? 2 : 0 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                {icon && (
-                  <Box className="icon-box-inner" sx={{
-                    p: 1.2,
-                    borderRadius: '16px',
-                    color: color || 'text.primary',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    transition: 'all 0.3s ease'
-                  }}>
-                    {React.cloneElement(icon, { sx: { fontSize: 26 } })}
-                  </Box>
-                )}
-                {title && (
-                  <Typography variant="h6" fontWeight={700}>
-                    {title}
-                  </Typography>
-                )}
-              </Box>
-              <Box>
-                {headerAction}
-              </Box>
-            </Box>
-          )}
+      <ConfirmDialog
+        open={Boolean(confirmUndo)}
+        icon={<UndoIcon />}
+        title="Undo this run?"
+        body={confirmUndo?.kind === 'rename' ? `${pluralize(confirmUndo?.moved ?? confirmUndo?.moves?.length ?? 0, 'file')} will get their original names back. Existing names won’t be overwritten.` : `${pluralize(confirmUndo?.moved ?? confirmUndo?.moves?.length ?? 0, 'item')} will go back to where they were. Folders created by this run are removed if they’re empty.`}
+        confirmLabel="Undo run"
+        onClose={() => setConfirmUndo(null)}
+        onConfirm={() => doUndo(confirmUndo)}
+      />
 
-          {/* Content */}
-          {children}
-        </Box>
-
-        {/* Decorative Blob */}
-        {color && (
-          <Box sx={{
-            position: 'absolute', top: -40, right: -40, width: 140, height: 140, borderRadius: '50%',
-            background: `radial-gradient(circle, ${color}15 0%, transparent 70%)`,
-            pointerEvents: 'none', zIndex: 0
-          }} />
-        )}
-      </CardContentWrapper>
-    </Card>
+      <HistorySheet
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        runs={runs}
+        busy={busy}
+        onUndo={(run) => { setHistoryOpen(false); setConfirmUndo(run); }}
+      />
+    </Box>
   );
 }

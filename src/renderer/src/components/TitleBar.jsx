@@ -1,110 +1,89 @@
-import React from 'react';
-import { Box, IconButton, Typography } from '@mui/material';
-import MinimizeIcon from '@mui/icons-material/Remove';
+import React, { useEffect, useState } from 'react';
+import { Box, ButtonBase, Typography, useTheme } from '@mui/material';
+import RemoveIcon from '@mui/icons-material/Remove';
 import CropSquareIcon from '@mui/icons-material/CropSquare';
+import FilterNoneIcon from '@mui/icons-material/FilterNone';
 import CloseIcon from '@mui/icons-material/Close';
-import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import ExpressiveShape from './common/ExpressiveShape';
+import { motion } from '../theme/tokens';
 
-export default function TitleBar() {
-  const handleMinimize = () => {
-    window.electronAPI?.minimizeWindow();
-  };
+// Windows caption-button geometry and the system close-hover red (OS convention, not an M3 role).
+const CAPTION_WIDTH = 46;
+const CLOSE_HOVER = '#C42B1C';
 
-  const handleMaximize = () => {
-    window.electronAPI?.maximizeWindow();
-  };
+function CaptionButton({ label, onClick, danger, children }) {
+  const { palette } = useTheme();
+  const c = palette.m3;
+  return (
+    <ButtonBase
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      sx={{
+        width: CAPTION_WIDTH,
+        height: '100%',
+        color: c.onSurfaceVariant,
+        transition: motion.effects(['background-color', 'color'], 'fast'),
+        '& svg': { fontSize: 16 },
+        '&:hover': danger ? { bgcolor: CLOSE_HOVER, color: '#FFFFFF' } : { bgcolor: `color-mix(in srgb, ${c.onSurface} 8%, transparent)` },
+        '&.Mui-focusVisible': { outline: `2px solid ${c.primary}`, outlineOffset: -2 },
+      }}
+    >
+      {children}
+    </ButtonBase>
+  );
+}
 
-  const handleClose = () => {
-    window.electronAPI?.closeWindow();
-  };
+export default function TitleBar({ subtitle }) {
+  const { palette } = useTheme();
+  const c = palette.m3;
+  const [maximized, setMaximized] = useState(false);
+
+  useEffect(() => {
+    window.electronAPI?.isMaximized?.().then(setMaximized).catch(() => { });
+    return window.electronAPI?.onMaximizedChange?.(setMaximized);
+  }, []);
 
   return (
     <Box
+      component="header"
+      onDoubleClick={(e) => {
+        if (e.target === e.currentTarget || e.target.dataset?.drag) window.electronAPI?.maximizeWindow();
+      }}
       sx={{
         height: 40,
+        flexShrink: 0,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        bgcolor: 'background.surfaceContainer',
-        borderBottom: '1px solid',
-        borderColor: 'divider',
-        // This makes the title bar draggable
+        bgcolor: c.surface,
         WebkitAppRegion: 'drag',
         userSelect: 'none',
       }}
     >
-      {/* App Title */}
-      <Box sx={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 1,
-        pl: 2,
-      }}>
-        <AutoAwesomeIcon sx={{ fontSize: 18, color: 'primary.main' }} />
-        <Typography
-          variant="body2"
-          fontWeight={600}
-          sx={{ color: 'text.primary', letterSpacing: '0.5px' }}
-        >
+      <Box data-drag="1" sx={{ display: 'flex', alignItems: 'center', gap: 1, pl: 2, minWidth: 0 }}>
+        <ExpressiveShape shape="cookie9" size={16} color={c.primary} />
+        <Typography variant="labelLarge" sx={{ color: c.onSurface }}>
           Organiuzer
         </Typography>
+        {subtitle && (
+          <Typography variant="labelLarge" noWrap sx={{ color: c.onSurfaceVariant, fontWeight: 400, minWidth: 0 }}>
+            <Box component="span" aria-hidden sx={{ mx: 1, opacity: 0.6 }}>/</Box>
+            {subtitle}
+          </Typography>
+        )}
       </Box>
 
-      {/* Window Controls */}
-      <Box
-        sx={{
-          display: 'flex',
-          height: '100%',
-          // Make buttons NOT draggable
-          WebkitAppRegion: 'no-drag',
-        }}
-      >
-        <IconButton
-          onClick={handleMinimize}
-          size="small"
-          sx={{
-            borderRadius: 0,
-            width: 46,
-            height: '100%',
-            color: 'text.secondary',
-            '&:hover': {
-              bgcolor: 'action.hover',
-            },
-          }}
-        >
-          <MinimizeIcon sx={{ fontSize: 18 }} />
-        </IconButton>
-        <IconButton
-          onClick={handleMaximize}
-          size="small"
-          sx={{
-            borderRadius: 0,
-            width: 46,
-            height: '100%',
-            color: 'text.secondary',
-            '&:hover': {
-              bgcolor: 'action.hover',
-            },
-          }}
-        >
-          <CropSquareIcon sx={{ fontSize: 16 }} />
-        </IconButton>
-        <IconButton
-          onClick={handleClose}
-          size="small"
-          sx={{
-            borderRadius: 0,
-            width: 46,
-            height: '100%',
-            color: 'text.secondary',
-            '&:hover': {
-              bgcolor: 'error.main',
-              color: 'white',
-            },
-          }}
-        >
-          <CloseIcon sx={{ fontSize: 18 }} />
-        </IconButton>
+      <Box sx={{ display: 'flex', height: '100%', WebkitAppRegion: 'no-drag' }}>
+        <CaptionButton label="Minimize" onClick={() => window.electronAPI?.minimizeWindow()}>
+          <RemoveIcon />
+        </CaptionButton>
+        <CaptionButton label={maximized ? 'Restore' : 'Maximize'} onClick={() => window.electronAPI?.maximizeWindow()}>
+          {maximized ? <FilterNoneIcon sx={{ fontSize: '13px !important', transform: 'scaleX(-1)' }} /> : <CropSquareIcon />}
+        </CaptionButton>
+        <CaptionButton label="Close" danger onClick={() => window.electronAPI?.closeWindow()}>
+          <CloseIcon />
+        </CaptionButton>
       </Box>
     </Box>
   );
