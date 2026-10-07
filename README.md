@@ -4,7 +4,7 @@ Organiuzer is a Windows desktop app for organizing folders and cleaning up docum
 
 Most tools work on your computer without an AI account. AI is optional for folder organization and document naming.
 
-![Organiuzer showing a sample folder with organization, search, version, duplicate, and rename tools](docs/screenshots/folder-tools.jpg)
+![Organiuzer main page with the folder picker, recent folders, organization totals, and settings](docs/screenshots/home.jpg)
 
 *Screenshots show the current app with sample documents. The examples shown need no AI account.*
 
@@ -21,6 +21,10 @@ Most tools work on your computer without an AI account. AI is optional for folde
 | History and Undo | Review past moves and renames, and restore earlier locations or names. | No |
 
 The home screen shows recent folders, organization totals, frequently used categories, and an estimate of time saved. Open a folder with the picker or drag it onto the home screen.
+
+![Organiuzer showing a sample folder with organization, search, version, duplicate, and rename tools](docs/screenshots/folder-tools.jpg)
+
+*Choose a tool from the folder view to organize, search, compare, or rename files.*
 
 ## Install and start
 
